@@ -281,6 +281,10 @@
                 <input id="history-search" class="ui-input" type="search" placeholder="Search transcripts" />
               </label>
             </div>
+            <details id="saved-recordings" class="saved-recordings" hidden>
+              <summary id="saved-recordings-summary">Saved audio</summary>
+              <div id="saved-recordings-list" class="saved-recordings-list"></div>
+            </details>
             <p id="history-empty" class="hint">No transcripts yet. Record once from Home or with your shortcut.</p>
             <div id="history-feed" class="history-feed" aria-live="polite"></div>
           </section>
@@ -494,6 +498,27 @@
                       </span>
                     </label>
 
+                    <fieldset id="polishingOptions" class="polishing-options" aria-label="Polishing options" disabled>
+                      <div class="polishing-option-grid">
+                        <label class="checkbox-label">
+                          <input id="removeFillers" type="checkbox" checked />
+                          <span>Remove fillers</span>
+                        </label>
+                        <label class="checkbox-label">
+                          <input id="consolidateWording" type="checkbox" checked />
+                          <span>Consolidate wording</span>
+                        </label>
+                        <label class="checkbox-label">
+                          <input id="structureText" type="checkbox" checked />
+                          <span>Paragraphs and lists</span>
+                        </label>
+                      </div>
+                      <details class="settings-advanced">
+                        <summary>Custom instructions</summary>
+                        <textarea id="promptTemplate" class="ui-input" rows="4" aria-label="Polishing instructions"></textarea>
+                      </details>
+                    </fieldset>
+
                     <label class="toggle-card checkbox-label">
                       <input id="skipFormatterInTerminals" type="checkbox" checked />
                       <span>
@@ -528,11 +553,6 @@
                         <input id="formatModel" class="ui-input" type="text" value="gpt-4o-mini" required />
                       </label>
                     </div>
-
-                    <label class="ui-field">
-                      <span class="ui-label">Transform prompt</span>
-                      <textarea id="promptTemplate" class="ui-input" rows="5" required></textarea>
-                    </label>
 
                     <label class="ui-field">
                       <span class="ui-label">Custom vocabulary</span>

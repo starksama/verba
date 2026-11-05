@@ -3,3 +3,6 @@ rustflags = ["--cfg=no_zerocopy_simd_x86_avx12_1_89_0"]
 
 [env]
 MACOSX_DEPLOYMENT_TARGET = "10.14"
+
+[build]
+target-dir = "src-tauri/target.noindex"

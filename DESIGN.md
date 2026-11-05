@@ -160,7 +160,7 @@ Verba is flat by default and layered by tone. Borders and subtle inset contrast 
 - **Processing:** Signal Blue dot.
 - **Issue:** danger dot plus exact next action.
 - **Tray:** Monochrome template icon, no text title. Recording changes the icon silhouette.
-- **Desktop recording indicator:** Transparent, half-height dot line that responds to mic level. No text, border, or filled background. Processing uses only a small spinner.
+- **Desktop recording indicator:** Compact, dark 104 × 30px capsule with a subtle light edge and white waveform bars driven by mic level. The transparent, nonactivating panel follows the focused window, including across displays and Spaces. A grey × interrupts; a white ✓ finishes and transcribes. Processing replaces the waveform with a white spinner and disables ✓. Esc interrupts only while recording or transcribing. An interrupted session expands to a compact Save / Discard prompt; both choices preserve the audio, with discarded recordings still recoverable in History. Idle hides the panel. This indicator stays dark across app themes so it remains visible over other apps.
 - **No-speech feedback:** Keep a compact in-app error visible after recording ends and show a toast with the next action.
 
 ### Shortcuts

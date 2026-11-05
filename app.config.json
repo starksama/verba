@@ -3,9 +3,16 @@
   "legalName": "Verba",
   "packageName": "verba",
   "bundleIdentifier": "com.verba.desktop",
-  "macOSSigningIdentity": "-",
+  "macOSSigningIdentity": "Verba Local Development",
   "storagePrefix": "verba",
   "logPrefix": "verba",
   "tempFilePrefix": "verba",
-  "microphoneUsageDescription": "{displayName} records microphone audio so it can transcribe your dictation."
+  "microphoneUsageDescription": "{displayName} records microphone audio so it can transcribe your dictation.",
+  "development": {
+    "displayName": "Verba Dev",
+    "bundleIdentifier": "com.verba.desktop.dev",
+    "storagePrefix": "verba-dev",
+    "logPrefix": "verba-dev",
+    "tempFilePrefix": "verba-dev"
+  }
 }

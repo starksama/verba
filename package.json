@@ -7,16 +7,22 @@
     "sync:app": "node scripts/sync-app-config.mjs",
     "dev": "vite",
     "build": "npm run sync:app && tsc && vite build",
+    "test:overlay": "node scripts/test-macos-overlay.mjs",
+    "test:signing": "node scripts/test-macos-signing.mjs",
+    "setup:macos-signing": "node scripts/setup-macos-signing.mjs",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:dev": "npm run sync:app && tauri dev",
-    "tauri:build": "npm run sync:app && tauri build --bundles app && node scripts/create-macos-dmg.mjs"
+    "tauri": "node scripts/tauri.mjs",
+    "tauri:dev": "node scripts/tauri.mjs dev",
+    "tauri:build": "node scripts/tauri.mjs build --bundles app && node scripts/create-macos-dmg.mjs",
+    "tauri:build:dev": "node scripts/tauri.mjs build --dev-app --bundles app",
+    "install:macos": "node scripts/install-macos-app.mjs",
+    "install:macos:dev": "node scripts/install-macos-app.mjs --dev-app"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.1.0"
+    "@tauri-apps/api": "^2.11.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.1.0",
+    "@tauri-apps/cli": "^2.11.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   },

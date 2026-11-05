@@ -15,6 +15,12 @@ type TranscriptionLanguage =
   | 'fr'
   | 'de';
 
+type PolishingOptions = {
+  remove_fillers: boolean;
+  consolidate: boolean;
+  structure: boolean;
+};
+
 type Settings = {
   api_key: string;
   prompt_template: string;
@@ -24,6 +30,7 @@ type Settings = {
   custom_vocabulary: string;
   format_model: string;
   format_enabled: boolean;
+  polishing: PolishingOptions;
   skip_formatter_in_terminals: boolean;
   include_clipboard_context: boolean;
   play_sound_cues: boolean;
@@ -35,6 +42,8 @@ type Settings = {
 type RuntimeStatus = {
   is_recording: boolean;
   is_processing: boolean;
+  interrupted: boolean;
+  failure?: { recording_id: string; message: string } | null;
   mic_level: number;
   last_message: string;
 };
@@ -58,6 +67,16 @@ type TranscriptHistoryEntry = {
   source_app?: string | null;
   source: string;
   processing_latency_ms?: number | null;
+};
+
+type SavedRecording = {
+  id: string;
+  created_at_ms: number;
+  status: string;
+  source_app: string | null;
+  error: string | null;
+  transcript: string | null;
+  raw_transcript?: string | null;
 };
 
 type DurableDraft = {
@@ -227,6 +246,10 @@ const whisperModelInput = document.querySelector<HTMLInputElement>('#whisperMode
 const customVocabularyInput = document.querySelector<HTMLTextAreaElement>('#customVocabulary')!;
 const formatModelInput = document.querySelector<HTMLInputElement>('#formatModel')!;
 const formatEnabledInput = document.querySelector<HTMLInputElement>('#formatEnabled')!;
+const polishingOptionsFieldset = document.querySelector<HTMLFieldSetElement>('#polishingOptions')!;
+const removeFillersInput = document.querySelector<HTMLInputElement>('#removeFillers')!;
+const consolidateInput = document.querySelector<HTMLInputElement>('#consolidateWording')!;
+const structureInput = document.querySelector<HTMLInputElement>('#structureText')!;
 const skipFormatterInTerminalsInput = document.querySelector<HTMLInputElement>('#skipFormatterInTerminals')!;
 const includeClipboardContextInput = document.querySelector<HTMLInputElement>('#includeClipboardContext')!;
 const playSoundCuesInput = document.querySelector<HTMLInputElement>('#playSoundCues')!;
@@ -376,7 +399,7 @@ let togglePendingAction: 'starting' | 'stopping' | null = null;
 let togglePendingTimeoutId: number | null = null;
 let historyCopyFeedbackTimeoutId: number | null = null;
 let appToastTimeoutId: number | null = null;
-let lastRenderedRuntimeState: Pick<RuntimeStatus, 'is_recording' | 'is_processing' | 'last_message'> | null = null;
+let lastRenderedRuntimeState: Pick<RuntimeStatus, 'is_recording' | 'is_processing' | 'last_message' | 'failure'> | null = null;
 let appStatusMessage = 'Ready';
 let statusMessageSource: 'runtime' | 'ui' = 'runtime';
 let quietInputStartedAt: number | null = null;
@@ -455,20 +478,6 @@ function microphoneGuidance(status: MicrophonePermissionStatus | null): string {
   }
   if (status.status === 'restricted') return 'Blocked by macOS policy.';
   return 'Click Request access.';
-}
-
-function setAccessibilityStatusSummary(_message: string, clearStructured = false): void {
-  if (clearStructured) {
-    lastAccessibilityStatus = null;
-    setPermissionUiState(onboardingAccessibilityRowEl, null);
-  }
-}
-
-function setMicrophoneStatusSummary(_message: string, clearStructured = false): void {
-  if (clearStructured) {
-    lastMicrophoneStatus = null;
-    setPermissionUiState(onboardingMicrophoneRowEl, null);
-  }
 }
 
 function isShortcutRelatedMessage(message: string): boolean {
@@ -608,11 +617,25 @@ function renderStatusBanner(): void {
   const runtime = lastRuntimeStatus;
   const missing = missingPermissionLabels();
   const runtimeIsActive = Boolean(runtime?.is_recording || runtime?.is_processing);
+  statusBannerEl.removeAttribute('title');
 
   if (runtimeIsActive && runtime) {
     statusEl.textContent = runtime.is_recording && liveInputIssueActive ? 'No input detected' : runtime.last_message;
     setStatusBannerTone(runtime.is_recording && liveInputIssueActive ? 'issue' : runtimeStatusBannerTone(runtime));
     setStatusBannerActionable(false);
+    return;
+  }
+
+  if (runtime?.failure) {
+    statusEl.textContent = 'Dictation failed · Open History';
+    setStatusBannerTone('issue');
+    setStatusBannerActionable(false);
+    statusBannerEl.classList.add('is-actionable');
+    statusBannerEl.dataset.action = 'history';
+    statusBannerEl.tabIndex = 0;
+    statusBannerEl.setAttribute('role', 'button');
+    statusBannerEl.setAttribute('aria-label', `${runtime.failure.message} Audio saved. Open History.`);
+    statusBannerEl.title = runtime.failure.message;
     return;
   }
 
@@ -1520,6 +1543,7 @@ function runtimeStateChanged(status: RuntimeStatus): boolean {
     !lastRenderedRuntimeState ||
     lastRenderedRuntimeState.is_recording !== status.is_recording ||
     lastRenderedRuntimeState.is_processing !== status.is_processing ||
+    lastRenderedRuntimeState.failure?.recording_id !== status.failure?.recording_id ||
     lastRenderedRuntimeState.last_message !== status.last_message
   );
 }
@@ -1554,18 +1578,20 @@ function renderStatus(status: RuntimeStatus): void {
   lastRenderedRuntimeState = {
     is_recording: status.is_recording,
     is_processing: status.is_processing,
+    failure: status.failure,
     last_message: status.last_message
   };
 
   document.body.classList.toggle('is-recording', status.is_recording);
   document.body.classList.toggle('is-processing', status.is_processing);
   clearTogglePendingState(status.is_recording);
+  updateSavedRecordingButtons();
   setRecordingActionLabels(status.is_recording);
   const runtimeFinished =
     Boolean(previousStatus?.is_recording || previousStatus?.is_processing) &&
     !status.is_recording &&
     !status.is_processing;
-  if (runtimeFinished && isRuntimeIssueMessage(status.last_message)) {
+  if (runtimeFinished && !status.failure && isRuntimeIssueMessage(status.last_message)) {
     showAppToast(toastRuntimeFeedbackMessage(status.last_message), 'error');
   }
   const runtimeBecameActive =
@@ -1592,12 +1618,12 @@ function clearTogglePendingState(nextIsRecording = Boolean(lastRuntimeStatus?.is
     togglePendingTimeoutId = null;
   }
   togglePendingAction = null;
-  setToggleButtonsDisabled(false);
+  setToggleButtonsDisabled(Boolean(lastRuntimeStatus?.is_processing || lastRuntimeStatus?.interrupted));
   setRecordingActionLabels(nextIsRecording);
 }
 
 function beginOptimisticToggleState(): boolean {
-  if (togglePendingAction) return false;
+  if (togglePendingAction || lastRuntimeStatus?.is_processing || lastRuntimeStatus?.interrupted) return false;
   const nextAction: 'starting' | 'stopping' = lastRuntimeStatus?.is_recording ? 'stopping' : 'starting';
   togglePendingAction = nextAction;
   setToggleButtonsDisabled(true);
@@ -1637,20 +1663,18 @@ function renderMicrophoneStatus(status: MicrophonePermissionStatus): void {
 }
 
 function onboardingAccessibilityLabel(status: AccessibilityPermissionStatus | null): string {
-  const appName = APP_BRAND.displayName;
   if (!status) return 'Checking';
-  if (!status.is_supported) return 'Accessibility setup is only available on macOS.';
-  if (status.status === 'dev_terminal') return 'Dev mode. Continue setup.';
-  if (status.is_granted) return 'Enabled. Continue setup.';
-  return `Open Accessibility, turn ${appName} on, then click Check again.`;
+  if (!status.is_supported) return 'macOS only';
+  if (status.is_granted) return 'Enabled';
+  return status.guidance;
 }
 
 function onboardingMicrophoneLabel(status: MicrophonePermissionStatus | null): string {
   const appName = APP_BRAND.displayName;
   if (!status) return 'Checking';
   if (!status.is_supported) return 'Microphone setup is only available on macOS.';
-  if (status.status === 'dev_terminal') return 'Dev mode. Continue setup.';
-  if (status.is_granted) return 'Enabled. Continue setup.';
+  if (status.is_granted) return 'Enabled';
+  if (status.status === 'check_failed') return status.guidance;
   if (status.status === 'not_determined') {
     return 'Click Request access. macOS will show the permission prompt.';
   }
@@ -1677,16 +1701,39 @@ function renderOnboardingPermissionStatuses(): void {
     Boolean(lastMicrophoneStatus && (!lastMicrophoneStatus.is_supported || lastMicrophoneStatus.is_granted));
 }
 
-async function checkAndRenderAccessibilityStatus(): Promise<AccessibilityPermissionStatus> {
-  const permissionStatus = await invokeCommand<AccessibilityPermissionStatus>('check_accessibility_permission');
-  renderAccessibilityStatus(permissionStatus);
-  return permissionStatus;
+const permissionCheckSequence = { accessibility: 0, microphone: 0 };
+
+async function checkAndRenderPermissionStatus(
+  kind: keyof typeof permissionCheckSequence, request: boolean
+): Promise<AccessibilityPermissionStatus> {
+  const sequence = ++permissionCheckSequence[kind];
+  const render = kind === 'accessibility' ? renderAccessibilityStatus : renderMicrophoneStatus;
+  if (kind === 'accessibility') lastAccessibilityStatus = null;
+  else lastMicrophoneStatus = null;
+  renderOnboardingPermissionStatuses();
+  try {
+    const status = await invokeCommand<AccessibilityPermissionStatus>(
+      `${request ? 'request' : 'check'}_${kind}_permission`
+    );
+    // Focus refreshes and manual checks can overlap. An older result must not
+    // overwrite a newer revocation with a stale green status.
+    if (sequence === permissionCheckSequence[kind]) render(status);
+    return status;
+  } catch (error) {
+    if (sequence === permissionCheckSequence[kind]) {
+      render({ platform: 'macOS', is_supported: true, is_granted: false,
+        status: 'check_failed', guidance: 'Could not check access. Try again.' });
+    }
+    throw error;
+  }
 }
 
-async function checkAndRenderMicrophoneStatus(): Promise<MicrophonePermissionStatus> {
-  const permissionStatus = await invokeCommand<MicrophonePermissionStatus>('check_microphone_permission');
-  renderMicrophoneStatus(permissionStatus);
-  return permissionStatus;
+function checkAndRenderAccessibilityStatus(request = false): Promise<AccessibilityPermissionStatus> {
+  return checkAndRenderPermissionStatus('accessibility', request);
+}
+
+function checkAndRenderMicrophoneStatus(request = false): Promise<MicrophonePermissionStatus> {
+  return checkAndRenderPermissionStatus('microphone', request);
 }
 
 async function refreshPermissionStatuses(options: { requestAccessibility?: boolean; requestMicrophone?: boolean } = {}): Promise<{
@@ -1694,16 +1741,10 @@ async function refreshPermissionStatuses(options: { requestAccessibility?: boole
   microphone: MicrophonePermissionStatus;
 }> {
   const [accessibility, microphone] = await Promise.all([
-    invokeCommand<AccessibilityPermissionStatus>(
-      options.requestAccessibility ? 'request_accessibility_permission' : 'check_accessibility_permission'
-    ),
-    invokeCommand<MicrophonePermissionStatus>(
-      options.requestMicrophone ? 'request_microphone_permission' : 'check_microphone_permission'
-    )
+    checkAndRenderAccessibilityStatus(options.requestAccessibility),
+    checkAndRenderMicrophoneStatus(options.requestMicrophone)
   ]);
 
-  renderAccessibilityStatus(accessibility);
-  renderMicrophoneStatus(microphone);
   return { accessibility, microphone };
 }
 
@@ -1711,23 +1752,24 @@ let permissionRefreshTimerId: number | null = null;
 
 function schedulePermissionRefresh(): void {
   if (!isTauriRuntime()) return;
+  ++permissionCheckSequence.accessibility;
+  ++permissionCheckSequence.microphone;
+  lastAccessibilityStatus = null;
+  lastMicrophoneStatus = null;
+  renderOnboardingPermissionStatuses();
   if (permissionRefreshTimerId !== null) {
     window.clearTimeout(permissionRefreshTimerId);
   }
   permissionRefreshTimerId = window.setTimeout(() => {
     permissionRefreshTimerId = null;
-    refreshPermissionStatuses().catch(() => {
-      setAccessibilityStatusSummary('Check failed', true);
-      setMicrophoneStatusSummary('Check failed', true);
-    });
+    void refreshPermissionStatuses().catch(() => { /* Each permission renders its own error. */ });
   }, 160);
 }
 
 async function openAccessibilitySettingsFromUi(button: HTMLButtonElement): Promise<void> {
   button.disabled = true;
   try {
-    const permissionStatus = await invokeCommand<AccessibilityPermissionStatus>('request_accessibility_permission');
-    renderAccessibilityStatus(permissionStatus);
+    const permissionStatus = await checkAndRenderAccessibilityStatus(true);
     if (permissionStatus.status === 'dev_terminal') {
       setStatusMessage(permissionStatus.guidance);
       return;
@@ -1739,10 +1781,8 @@ async function openAccessibilitySettingsFromUi(button: HTMLButtonElement): Promi
 
     const message = await invokeCommand<string>('open_accessibility_settings');
     setStatusMessage(message);
-    setAccessibilityStatusSummary('Settings opened');
     syncPermissionSetupBanner();
   } catch (error) {
-    setAccessibilityStatusSummary('Open failed');
     setStatusMessage('Could not open Accessibility. Open System Settings > Privacy & Security > Accessibility.');
   } finally {
     button.disabled = Boolean(
@@ -1767,10 +1807,8 @@ async function resetAccessibilityPermissionFromUi(button: HTMLButtonElement): Pr
 
 async function openMicrophoneSettingsFromUi(button: HTMLButtonElement): Promise<void> {
   button.disabled = true;
-  setMicrophoneStatusSummary('Requesting');
   try {
-    const permissionStatus = await invokeCommand<MicrophonePermissionStatus>('request_microphone_permission');
-    renderMicrophoneStatus(permissionStatus);
+    const permissionStatus = await checkAndRenderMicrophoneStatus(true);
     if (permissionStatus.is_granted) {
       setStatusMessage('Microphone enabled.');
       return;
@@ -1786,10 +1824,8 @@ async function openMicrophoneSettingsFromUi(button: HTMLButtonElement): Promise<
 
     const message = await invokeCommand<string>('open_microphone_settings');
     setStatusMessage(message);
-    setMicrophoneStatusSummary('Settings opened');
     syncPermissionSetupBanner();
   } catch (error) {
-    setMicrophoneStatusSummary('Open failed');
     setStatusMessage(
       `Could not open Microphone. Click Request access first, then use System Settings after ${APP_BRAND.displayName} appears.`
     );
@@ -1800,19 +1836,16 @@ async function openMicrophoneSettingsFromUi(button: HTMLButtonElement): Promise<
 }
 
 async function ensureOnboardingPermissionsReady(): Promise<boolean> {
-  let accessibility = await invokeCommand<AccessibilityPermissionStatus>('check_accessibility_permission');
-  let microphone = await invokeCommand<MicrophonePermissionStatus>('check_microphone_permission');
+  let accessibility = await checkAndRenderAccessibilityStatus();
+  let microphone = await checkAndRenderMicrophoneStatus();
 
   if (microphone.is_supported && !microphone.is_granted && microphone.status === 'not_determined') {
-    microphone = await invokeCommand<MicrophonePermissionStatus>('request_microphone_permission');
+    microphone = await checkAndRenderMicrophoneStatus(true);
   }
 
   if (accessibility.is_supported && !accessibility.is_granted) {
-    accessibility = await invokeCommand<AccessibilityPermissionStatus>('request_accessibility_permission');
+    accessibility = await checkAndRenderAccessibilityStatus(true);
   }
-
-  renderAccessibilityStatus(accessibility);
-  renderMicrophoneStatus(microphone);
 
   const missing = [];
   if (accessibility.is_supported && !accessibility.is_granted) missing.push('Accessibility');
@@ -1860,6 +1893,20 @@ function withShortcutValues(
   return { ...config, toggle_hotkeys: normalized };
 }
 
+function syncPolishingEnabled(): void {
+  polishingOptionsFieldset.disabled = !formatEnabledInput.checked;
+}
+
+function applyPolishingSettings(settings: Settings): void {
+  formatEnabledInput.checked = settings.format_enabled;
+  removeFillersInput.checked = settings.polishing.remove_fillers;
+  consolidateInput.checked = settings.polishing.consolidate;
+  structureInput.checked = settings.polishing.structure;
+  syncPolishingEnabled();
+}
+
+formatEnabledInput.addEventListener('change', syncPolishingEnabled);
+
 function readSettingsFromForm(): Settings {
   return {
     api_key: apiKeyInput.value.trim(),
@@ -1870,6 +1917,11 @@ function readSettingsFromForm(): Settings {
     custom_vocabulary: customVocabularyInput.value.trim(),
     format_model: formatModelInput.value.trim() || 'gpt-4o-mini',
     format_enabled: formatEnabledInput.checked,
+    polishing: {
+      remove_fillers: removeFillersInput.checked,
+      consolidate: consolidateInput.checked,
+      structure: structureInput.checked
+    },
     skip_formatter_in_terminals: skipFormatterInTerminalsInput.checked,
     include_clipboard_context: includeClipboardContextInput.checked,
     play_sound_cues: playSoundCuesInput.checked,
@@ -2124,7 +2176,7 @@ async function saveSettingsPayload(payload: Settings, successMessage = 'Saved se
     apiKeyInput.value = savedSettings.api_key;
     savedApiKey = savedSettings.api_key;
     setApiKeyEditorOpen(false);
-    formatEnabledInput.checked = savedSettings.format_enabled;
+    applyPolishingSettings(savedSettings);
     renderStatus(runtimeStatus);
     setStatusMessage(successMessage);
     renderShortcutDirtyState();
@@ -2544,6 +2596,88 @@ function renderHistory(entries: TranscriptHistoryEntry[]): void {
   shouldScrollHistorySelection = false;
 }
 
+const savedRecordingsEl = document.querySelector<HTMLDetailsElement>('#saved-recordings')!;
+const savedRecordingsSummary = document.querySelector<HTMLElement>('#saved-recordings-summary')!;
+const savedRecordingsList = document.querySelector<HTMLDivElement>('#saved-recordings-list')!;
+let recordingActionPending = false;
+let previousFailedRecordings = '';
+
+async function showSavedRecording(id: string): Promise<void> {
+  renderSavedRecordings(await invokeCommand<SavedRecording[]>('get_saved_recordings'));
+  setActiveTab('history');
+  savedRecordingsEl.open = true;
+  const row = Array.from(savedRecordingsList.children).find(row => (row as HTMLElement).dataset.recordingId === id) as HTMLElement | undefined;
+  row?.scrollIntoView({ block: 'nearest' });
+  row?.focus({ preventScroll: true });
+}
+
+function renderSavedRecordings(entries: SavedRecording[]): void {
+  savedRecordingsEl.hidden = entries.length === 0;
+  const failed = entries.filter(entry => entry.status === 'failed').map(entry => entry.id).join(',');
+  if (failed && failed !== previousFailedRecordings) savedRecordingsEl.open = true;
+  previousFailedRecordings = failed;
+  const unfinished = entries.filter(entry => !['completed', 'recording', 'processing', 'discarded'].includes(entry.status)).length;
+  savedRecordingsSummary.textContent = `Saved audio · ${entries.length}${unfinished ? ` · ${unfinished} unfinished` : ''}`;
+  savedRecordingsList.replaceChildren();
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'saved-recording-row';
+    row.dataset.recordingId = entry.id;
+    row.tabIndex = -1;
+    const info = document.createElement('div');
+    info.className = 'saved-recording-info';
+    const title = document.createElement('span');
+    title.textContent = new Date(entry.created_at_ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const label = document.createElement('span');
+    label.className = 'hint';
+    const labels: Record<string, string> = { saved: 'Saved', discarded: 'Discarded', completed: 'Transcribed', processing: 'Transcribing…', recording: 'Recording…', interrupted: 'Interrupted', failed: 'Failed', recovered: 'Recovered', transcribed: 'Transcript saved' };
+    label.textContent = [entry.source_app, labels[entry.status] || 'Saved'].filter(Boolean).join(' · ');
+    info.append(title, label);
+    if (entry.error) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Error details';
+      const error = document.createElement('span');
+      error.className = 'hint saved-recording-error';
+      error.textContent = entry.error;
+      details.append(summary, error);
+      info.append(details);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'saved-recording-actions';
+    const action = (text: string, command: string, args: Record<string, unknown>) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'ui-button ui-button-secondary'; button.textContent = text;
+      button.addEventListener('click', async () => {
+        if (recordingActionPending) return;
+        recordingActionPending = true;
+        updateSavedRecordingButtons();
+        try {
+          await invokeCommand(command, args);
+          if (command === 'copy_text_to_clipboard') showAppToast('Copied', 'success');
+        } catch (error) { showAppToast(userErrorMessage(error), 'error'); }
+        finally { recordingActionPending = false; updateSavedRecordingButtons(); }
+      });
+      actions.append(button);
+      return button;
+    };
+    action('Audio', 'reveal_recording', { id: entry.id });
+    const transcript = entry.transcript || entry.raw_transcript;
+    if (transcript) action('Copy text', 'copy_text_to_clipboard', { text: transcript });
+    const retry = action('Reprocess', 'retry_recording', { id: entry.id });
+    retry.title = 'Transcribe and polish again with current settings';
+    retry.dataset.retryRecording = 'true';
+    row.append(info, actions);
+    savedRecordingsList.append(row);
+  }
+  updateSavedRecordingButtons();
+}
+function updateSavedRecordingButtons(): void {
+  savedRecordingsList.querySelectorAll<HTMLButtonElement>('button').forEach(button => {
+    button.disabled = recordingActionPending || Boolean(button.dataset.retryRecording && (lastRuntimeStatus?.is_recording || lastRuntimeStatus?.is_processing || lastRuntimeStatus?.interrupted));
+  });
+}
+
 async function loadHistory(): Promise<void> {
   const entries = await invokeCommand<TranscriptHistoryEntry[]>('get_transcript_history');
   renderHistory(entries);
@@ -2562,7 +2696,7 @@ async function loadInitial(): Promise<void> {
   whisperModelInput.value = settings.whisper_model;
   customVocabularyInput.value = settings.custom_vocabulary || '';
   formatModelInput.value = settings.format_model;
-  formatEnabledInput.checked = settings.format_enabled;
+  applyPolishingSettings(settings);
   skipFormatterInTerminalsInput.checked = settings.skip_formatter_in_terminals;
   includeClipboardContextInput.checked = settings.include_clipboard_context;
   playSoundCuesInput.checked = settings.play_sound_cues;
@@ -2591,17 +2725,13 @@ async function loadInitial(): Promise<void> {
     focusShortcutSettings();
   }
   await loadHistory();
+  renderSavedRecordings(await invokeCommand<SavedRecording[]>('get_saved_recordings'));
   const draft = await invokeCommand<DurableDraft | null>('get_durable_draft');
   renderDurableDraft(draft);
 
-  setAccessibilityStatusSummary('Checking');
-  setMicrophoneStatusSummary('Checking');
   try {
     await refreshPermissionStatuses();
-  } catch (error) {
-    setAccessibilityStatusSummary('Check failed', true);
-    setMicrophoneStatusSummary('Check failed', true);
-  }
+  } catch { /* Each permission renders its own error. */ }
 
   const missingPermissions = missingPermissionLabels();
   if (!isOnboardingCompleted() || missingPermissions.length > 0) {
@@ -2770,7 +2900,6 @@ onboardingCheckAccessibilityBtn.addEventListener('click', async () => {
   try {
     await checkAndRenderAccessibilityStatus();
   } catch (error) {
-    setAccessibilityStatusSummary('Check failed', true);
     setStatusMessage(`Could not read Accessibility. Open Accessibility, turn ${APP_BRAND.displayName} on, then click Check again.`);
   } finally {
     onboardingCheckAccessibilityBtn.disabled = false;
@@ -2786,7 +2915,6 @@ onboardingCheckMicrophoneBtn.addEventListener('click', async () => {
   try {
     await checkAndRenderMicrophoneStatus();
   } catch (error) {
-    setMicrophoneStatusSummary('Check failed', true);
     setStatusMessage(
       `Could not read Microphone access. Click Request access, then check System Settings after ${APP_BRAND.displayName} appears.`
     );
@@ -2809,14 +2937,18 @@ document.addEventListener('visibilitychange', () => {
 statusBannerEl.addEventListener('click', () => {
   if (statusBannerEl.dataset.action === 'setup') {
     showPermissionOnboarding();
+  } else if (statusBannerEl.dataset.action === 'history' && lastRuntimeStatus?.failure) {
+    const id = lastRuntimeStatus.failure.recording_id;
+    void showSavedRecording(id).then(() => invokeCommand('dismiss_recording_failure', { id }))
+      .catch(error => showAppToast(userErrorMessage(error), 'error'));
   }
 });
 
 statusBannerEl.addEventListener('keydown', (event) => {
-  if (statusBannerEl.dataset.action !== 'setup') return;
+  if (!statusBannerEl.dataset.action) return;
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
-  showPermissionOnboarding();
+  statusBannerEl.click();
 });
 
 listenEvent<TranscriptHistoryEntry[]>('transcript-history-updated', (event) => {
@@ -2833,6 +2965,11 @@ listenEvent<DurableDraft | null>('durable-draft-updated', (event) => {
   renderDurableDraft(event.payload);
 }).catch((error) => {
   setStatusMessage(`Draft listener failed: ${userErrorMessage(error)}`);
+});
+
+listenEvent<SavedRecording[]>('recordings-updated', event => renderSavedRecordings(event.payload));
+listenEvent<string>('open-recording-history', event => {
+  void showSavedRecording(event.payload).catch(error => showAppToast(userErrorMessage(error), 'error'));
 });
 
 listenEvent<RuntimeStatus>('runtime-status', (event) => {

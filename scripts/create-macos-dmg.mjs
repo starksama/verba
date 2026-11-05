@@ -3,13 +3,17 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { arch } from 'node:process';
+import { verifyStableSignature } from './macos-signature.mjs';
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const appConfig = JSON.parse(await import('node:fs').then(({ readFileSync }) => readFileSync(join(rootDir, 'app.config.json'), 'utf8')));
 const packageJson = JSON.parse(await import('node:fs').then(({ readFileSync }) => readFileSync(join(rootDir, 'package.json'), 'utf8')));
 
 const displayName = appConfig.displayName;
-const cargoTargetDir = join(rootDir, 'src-tauri', 'target', 'release');
+const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--no-deps', '--format-version', '1'], {
+  cwd: join(rootDir, 'src-tauri'), encoding: 'utf8'
+}));
+const cargoTargetDir = join(metadata.target_directory, 'release');
 const appPath = join(cargoTargetDir, 'bundle', 'macos', `${displayName}.app`);
 const dmgDir = join(cargoTargetDir, 'bundle', 'dmg');
 const dmgStageDir = join(dmgDir, `${displayName}-install`);
@@ -23,6 +27,7 @@ if (process.platform !== 'darwin') {
 if (!existsSync(appPath)) {
   throw new Error(`Missing app bundle: ${appPath}`);
 }
+verifyStableSignature(appPath);
 
 mkdirSync(dmgDir, { recursive: true });
 rmSync(dmgPath, { force: true });

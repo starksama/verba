@@ -46,7 +46,7 @@
     ],
     "macOS": {
       "entitlements": "./Entitlements.plist",
-      "signingIdentity": "-",
+      "signingIdentity": "Verba Local Development",
       "minimumSystemVersion": "10.14"
     }
   }

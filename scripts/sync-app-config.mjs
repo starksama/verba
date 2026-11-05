@@ -76,6 +76,28 @@ function syncTauriConfig() {
     };
   }
   writeJson('src-tauri/tauri.conf.json', tauriConfig);
+
+  const development = config.development;
+  for (const key of ['displayName', 'bundleIdentifier', 'storagePrefix', 'logPrefix', 'tempFilePrefix']) {
+    if (typeof development?.[key] !== 'string' || !development[key].trim()) {
+      throw new Error(`app.config.json: development.${key} must be a non-empty string`);
+    }
+    if (development[key] === app[key]) {
+      throw new Error(`app.config.json: development.${key} must differ from production`);
+    }
+  }
+  writeJson('src-tauri/tauri.dev.conf.json', {
+    $schema: tauriConfig.$schema,
+    productName: development.displayName,
+    identifier: development.bundleIdentifier,
+    app: {
+      windows: tauriConfig.app.windows.map((windowConfig) => ({
+        ...windowConfig,
+        title: development.displayName
+      }))
+    },
+    bundle: { macOS: { infoPlist: './Info.dev.plist' } }
+  });
 }
 
 function syncCargoManifest() {
@@ -98,6 +120,10 @@ function syncInfoPlist() {
 </plist>
 `;
   writeFileSync(join(rootDir, 'src-tauri/Info.plist'), plist);
+  writeFileSync(
+    join(rootDir, 'src-tauri/Info.dev.plist'),
+    plist.replaceAll(xmlEscape(app.displayName), xmlEscape(config.development.displayName))
+  );
 }
 
 syncPackageJson();

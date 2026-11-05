@@ -1322,6 +1322,24 @@ pre {
   gap: 8px;
 }
 
+.polishing-options {
+  min-width: 0;
+  margin: 0;
+  padding: 4px 10px 8px;
+  border: 0;
+}
+
+.polishing-option-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 4px;
+}
+
+.polishing-options:disabled {
+  opacity: 0.6;
+}
+
 .toggle-card,
 .shortcut-item,
 .permission-row {
@@ -2204,3 +2222,18 @@ textarea.ui-input:focus,
     scroll-behavior: auto !important;
   }
 }
+
+/* Audio recovery stays folded away from the transcript timeline. */
+.saved-recordings { margin-bottom: 16px; border-bottom: 1px solid var(--stroke); padding-bottom: 12px; }
+.saved-recordings summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.saved-recordings summary:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.saved-recordings-list { margin-top: 8px; }
+.saved-recording-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+.saved-recording-row + .saved-recording-row { border-top: 1px solid var(--stroke); }
+.saved-recording-row:focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.saved-recording-info { display: grid; gap: 3px; min-width: 0; font-size: 12px; }
+.saved-recording-info .hint { margin: 0; overflow-wrap: anywhere; }
+.saved-recording-error { max-width: 65ch; }
+.saved-recording-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.saved-recording-actions .ui-button { min-height: 26px; padding: 4px 8px; font-size: 11px; }
+@media (max-width: 600px) { .saved-recording-row { align-items: flex-start; flex-direction: column; gap: 8px; } }

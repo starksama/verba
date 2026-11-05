@@ -1,6 +1,7 @@
 fn main() {
     #[cfg(target_os = "macos")]
     {
+        println!("cargo:rerun-if-changed=src/macos_permissions.m");
         cc::Build::new()
             .file("src/macos_permissions.m")
             .flag("-fobjc-arc")
