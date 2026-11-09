@@ -6,5 +6,6 @@ export const APP_BRAND = {
   displayName: identity.displayName,
   legalName: appConfig.legalName,
   storagePrefix: identity.storagePrefix,
-  iconUrl: new URL('../src-tauri/icons/32x32.png', import.meta.url).href
+  iconUrl: new URL('../src-tauri/icons/32x32.png', import.meta.url).href,
+  markUrl: new URL('../src-tauri/icons/128x128@2x.png', import.meta.url).href
 } as const;

@@ -8,10 +8,13 @@ If a future task touches layout, styling, interaction design, copy, or informati
 
 Verba should feel like a calm desktop app, not a busy SaaS dashboard.
 
-The app exists to support one primary workflow:
-1. Start dictation quickly.
-2. Process speech into usable text.
-3. Return the text to the app the user was already working in.
+The app is a productivity tool for writing faster. It supports two workflows:
+1. Dictation: speak, get clean text back in the app the user was already in.
+2. Rewrite: select text anywhere, press a prompt's shortcut, get it rewritten in place.
+
+A shared Vocabulary makes both spell the user's names and terms correctly, and learns from the user's corrections.
+
+The design language is the live indicator's: near-black ink, soft borders, rounded surfaces, Inter. Color comes from the app icon: blue is voice, mint is text. The app window and the indicator must look like one product.
 
 The UI should therefore feel:
 - compact
@@ -72,10 +75,11 @@ Settings should not:
 ### Top-level navigation
 
 The top-level app structure is:
-- Home
-- Dictation
-- History
-- Settings
+- Home (dashboard: record card, usage stats, 14-day activity, recent items, rewrite + vocabulary summaries)
+- History (dictation and rewrites in one timeline, filterable)
+- Rewrite (prompt cards: name, shortcut, prompt; autosaved)
+- Vocabulary (terms + suggestions learned from the user's edits; autosaved)
+- Settings (General, Shortcuts, AI)
 
 Do not expand this casually. New top-level sections should be rare.
 
@@ -125,8 +129,9 @@ The desktop app should use a framed shell layout:
 - history should read like a simple transcript timeline, not an analytics/export dashboard
 - prefer grouped day sections with time + transcript rows over split panes, export controls, or detail inspectors
 - if history search exists, keep it to one plain search field; avoid extra dropdown filters or export tooling
-- on Home, prefer a compact stats strip plus a recent transcript list over shortcut summary tiles or a single large "latest transcript" preview card
-- home stats should use the standard app radius, not oversized pill shapes
+- Home leads with the indicator-styled record card (always near-black, both themes), then one Activity card, then recent items
+- the Activity card's totals cover the same 14 days as its chart and double as its legend; no separate stat tiles
+- stats track dictation and rewrites separately; time saved is an estimate and must say so on hover
 - if transcript rows need actions, keep it to a direct copy action inside the row; avoid separate detail panes just for copy/open behavior
 - for History specifically, row click may copy directly; confirm it with a subtle row-level state and a small bottom-right toast instead of adding another banner or modal
 
@@ -136,7 +141,8 @@ Settings sections should stay short and practical:
 - General
 - Shortcuts
 - AI
-- Access
+
+Rewrite prompts and Vocabulary are top-level pages, not settings: they are content the user builds over time.
 
 Avoid verbose labels like:
 - "General shortcut behavior"
@@ -178,27 +184,25 @@ Practical guidance:
 
 ### Shape language
 
-Roundness must stay low.
+Match the live indicator: rounded but precise.
 
 Rules:
-- use low corner radius across cards, buttons, inputs, panels, and modals
-- avoid pill-heavy UI except where functionally necessary
-- avoid soft, cute, bubbly shapes
-
-The product should feel precise, not playful.
+- cards 16px, buttons and inputs 10px, dialogs 20px; pills only for status, chips, and the indicator itself
+- one line-icon set (24px grid, 1.75 stroke) for navigation, rows, and stat cards
+- no decorative gradients or illustrations
 
 ### Color and contrast
 
-The app should stay light, restrained, and low-drama.
+Neutral surfaces with two brand colors taken from the app icon. Light theme by default, with a dark theme built from the indicator's blacks; follow the system setting.
 
-Rules:
-- neutral surfaces
-- subtle accent usage
-- no loud gradients as the primary identity
-- status colors only where they communicate state
-- avoid "primary button from a React tutorial" styling
-
-Accent color should support function, not dominate the screen.
+Color roles (tokens in src/style.css):
+- `--voice` (blue): dictation and speech. Dictation stats and chart bars, mic glyphs, the active nav icon, focus rings, the current onboarding step
+- `--mint` (green): written text and success. Rewrite stats and chart bars, pencil glyphs, prompt icons, "Allowed" and completed states
+- the blue→mint blend appears only where speech becomes text: the hero voice bars. Never as a background gradient or on text
+- the primary button stays ink (near-black in light, near-white in dark); brand color marks meaning, not buttons
+- red and amber only for errors and warnings
+- muted text (`--text-3`) must keep 4.5:1 contrast on cards and canvas
+- never hard-code a color in a component
 
 ### Shadows and elevation
 
@@ -339,6 +343,7 @@ Rules:
 - keep the shortcut list to the real actions only:
   hold to speak
   hands-free
+  one per rewrite prompt (managed in Settings > Rewrite, each with a name, shortcut, and prompt)
 - global shortcuts should use two modifiers or a function key
 - never allow common editing shortcuts like Cmd+C, Cmd+V, Cmd+X, or similar single-modifier chords
 - remove preset rows, suggestion lists, fallback maps, and other "advanced" shortcut UI
@@ -353,9 +358,9 @@ Rules:
 ## What To Avoid
 
 Never reintroduce these patterns without explicit user approval:
-- dashboard-style filler cards
+- dashboard cards that don't show the user's real usage or content
 - oversized sidebars
-- big rounded "cute" UI
+- bubbly, playful, or decorative UI that breaks from the indicator's look
 - bold-heavy typography
 - multi-line sidebar nav descriptions
 - verbose settings headers
@@ -384,7 +389,7 @@ Before shipping UI work, verify:
 - no unnecessary descriptive text was added
 - settings remain segmented and quiet
 - typography does not rely on bold
-- roundness stayed low
+- shapes, colors, and type match the live indicator and the tokens in src/style.css
 - controls and panels remained compact
 - visible status text is short and relevant
 - the app still feels like a polished desktop utility
@@ -397,3 +402,13 @@ Before finalizing a fix, explicitly validate these points:
 - impeccable distill check: for any UI, layout, onboarding, settings, status, or copy change, apply `$impeccable distill [target]` before finalizing. Remove nonessential words, duplicate guidance, decorative wrappers, and default-visible diagnostics. Success states should be labels, not instructions.
 
 Prefer the fix that reduces system complexity and resolves the issue at the correct boundary, not the smallest local patch if that patch spreads special cases.
+
+## Onboarding
+
+Onboarding gets a new user to their first dictation, not through a settings tour.
+
+- four steps: Welcome, Access, Connect (API key), Try it. Progress shows as dots, not "Step 1 of N"
+- each step has one primary action; Skip is always visible
+- defaults (recording mode, language) are not asked; they live in Settings
+- the Try step uses the real shortcut and a real practice field. Seeing their own words appear is the finish line
+- permission rows show why in five words or fewer, and collapse to "Allowed" once granted

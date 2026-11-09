@@ -6,6 +6,9 @@ import { arch } from 'node:process';
 import { verifyStableSignature } from './macos-signature.mjs';
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+// Release credentials (Developer ID, notary key) live in an untracked .env, never in the repo.
+const envFile = join(rootDir, '.env');
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 const appConfig = JSON.parse(await import('node:fs').then(({ readFileSync }) => readFileSync(join(rootDir, 'app.config.json'), 'utf8')));
 const packageJson = JSON.parse(await import('node:fs').then(({ readFileSync }) => readFileSync(join(rootDir, 'package.json'), 'utf8')));
 
@@ -52,4 +55,25 @@ execFileSync('hdiutil', [
 
 rmSync(dmgStageDir, { recursive: true, force: true });
 
-console.log(`Created ${dmgPath}`);
+// Sign the disk image itself so Gatekeeper can check it before it is opened.
+// Same identity Tauri used for the app: APPLE_SIGNING_IDENTITY overrides the config default.
+const signingIdentity = process.env.APPLE_SIGNING_IDENTITY || appConfig.macOSSigningIdentity;
+// Apple's timestamp service only accepts Apple-issued certificates.
+const timestamp = signingIdentity.startsWith('Developer ID Application: ') ? '--timestamp' : '--timestamp=none';
+execFileSync('codesign', ['--force', timestamp, '--sign', signingIdentity, dmgPath], { stdio: 'inherit' });
+
+// Notarize with an App Store Connect API key. Without one the DMG is signed but other Macs still warn.
+const { APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_PATH } = process.env;
+if (APPLE_API_KEY && APPLE_API_ISSUER && APPLE_API_KEY_PATH) {
+  execFileSync('xcrun', [
+    'notarytool', 'submit', dmgPath,
+    '--key', APPLE_API_KEY_PATH, '--key-id', APPLE_API_KEY, '--issuer', APPLE_API_ISSUER,
+    '--wait'
+  ], { stdio: 'inherit' });
+  execFileSync('xcrun', ['stapler', 'staple', dmgPath], { stdio: 'inherit' });
+  execFileSync('spctl', ['--assess', '--type', 'open', '--context', 'context:primary-signature', '-vv', dmgPath], { stdio: 'inherit' });
+  console.log(`Created notarized ${dmgPath}`);
+} else {
+  console.log(`Created ${dmgPath}`);
+  console.log('Not notarized: set APPLE_API_KEY, APPLE_API_ISSUER and APPLE_API_KEY_PATH to notarize.');
+}

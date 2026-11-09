@@ -14,7 +14,10 @@ void verba_diagnostic_event(const char *message) {
   os_log_with_type(log, OS_LOG_TYPE_DEFAULT, "%{public}s", message);
 }
 
-bool verba_accessibility_is_trusted(bool prompt) {
+// 0 = not trusted, 1 = trusted, 2 = trusted but this process still holds a stale
+// event-posting denial. CGPreflightPostEventAccess is evaluated once per process,
+// so a grant made while Verba runs only reaches event posting after a relaunch.
+int verba_accessibility_state(bool prompt) {
   bool trusted;
   if (prompt) {
     NSDictionary *options = @{
@@ -36,7 +39,8 @@ bool verba_accessibility_is_trusted(bool prompt) {
     NSString *event = [NSString stringWithFormat:@"accessibility trusted=%d post_events=%d prompt=%d", trusted, canPost, prompt];
     verba_diagnostic_event(event.UTF8String);
   }
-  return trusted && canPost;
+  if (!trusted) return 0;
+  return canPost ? 1 : 2;
 }
 
 int verba_microphone_authorization_status(void) {
@@ -261,11 +265,13 @@ void verba_configure_overlay_window(void *window_ptr) {
   NSWindow *window = (__bridge NSWindow *)window_ptr;
   verba_run_overlay_window_operation(window, ^{ (void)verba_overlay_controller(window); });
 }
-void verba_set_overlay_window_expanded(void *window_ptr, bool expanded) {
+// layout: 0 = compact pill, 1 = wide pill (rewrite with prompt name), 2 = dialog.
+void verba_set_overlay_window_layout(void *window_ptr, int layout) {
   NSWindow *window = (__bridge NSWindow *)window_ptr;
   verba_run_overlay_window_operation(window, ^{
     VerbaOverlayController *controller = verba_overlay_controller(window);
-    [controller.panel setContentSize:expanded ? NSMakeSize(256, 112) : NSMakeSize(128, 44)];
+    NSSize size = layout == 2 ? NSMakeSize(256, 112) : layout == 1 ? NSMakeSize(256, 44) : NSMakeSize(128, 44);
+    [controller.panel setContentSize:size];
     [controller track];
   });
 }
@@ -276,4 +282,79 @@ void verba_show_overlay_window_without_activation(void *window_ptr) {
 void verba_hide_overlay_window(void *window_ptr) {
   NSWindow *window = (__bridge NSWindow *)window_ptr;
   verba_run_overlay_window_operation(window, ^{ [verba_overlay_controller(window) hide]; });
+}
+
+// Frontmost-app and selection queries go straight to AppKit and Accessibility.
+// They must never go through AppleScript/System Events: a cold System Events
+// launch while a hold shortcut is down makes macOS report the hotkey as released.
+
+CFStringRef verba_frontmost_app_name(void) {
+  NSString *name = NSWorkspace.sharedWorkspace.frontmostApplication.localizedName;
+  return name.length ? (CFStringRef)CFBridgingRetain([name copy]) : NULL;
+}
+
+int verba_frontmost_app_pid(void) {
+  pid_t pid = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+  return pid > 0 ? pid : -1;
+}
+
+static BOOL verba_app_matches_name(NSRunningApplication *app, NSString *name) {
+  NSString *executable = app.executableURL.lastPathComponent;
+  return (app.localizedName && [app.localizedName caseInsensitiveCompare:name] == NSOrderedSame) ||
+         (executable && [executable caseInsensitiveCompare:name] == NSOrderedSame);
+}
+
+int verba_app_pid_by_name(CFStringRef cfName) {
+  NSString *name = (__bridge NSString *)cfName;
+  NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (front && verba_app_matches_name(front, name)) return front.processIdentifier;
+  for (NSRunningApplication *app in NSWorkspace.sharedWorkspace.runningApplications) {
+    if (app.activationPolicy == NSApplicationActivationPolicyRegular && verba_app_matches_name(app, name))
+      return app.processIdentifier;
+  }
+  return -1;
+}
+
+bool verba_activate_app_pid(int pid) {
+  NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+  return app && [app activateWithOptions:0];
+}
+
+// Selected text in the focused element of the frontmost app, or NULL. Short
+// timeouts keep a hung target from delaying the start of a recording.
+static CFStringRef verba_copy_selected_text(AXUIElementRef app) {
+  CFTypeRef focused = NULL, selected = NULL;
+  CFStringRef result = NULL;
+  if (AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess &&
+      focused && CFGetTypeID(focused) == AXUIElementGetTypeID()) {
+    AXUIElementSetMessagingTimeout((AXUIElementRef)focused, 0.1);
+    if (AXUIElementCopyAttributeValue((AXUIElementRef)focused, kAXSelectedTextAttribute, &selected) == kAXErrorSuccess &&
+        selected && CFGetTypeID(selected) == CFStringGetTypeID() && CFStringGetLength(selected) > 0) {
+      result = (CFStringRef)CFRetain(selected);
+    }
+  }
+  if (selected) CFRelease(selected);
+  if (focused) CFRelease(focused);
+  return result;
+}
+
+CFStringRef verba_focused_selected_text(void) {
+  pid_t pid = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+  if (pid <= 0 || !AXIsProcessTrusted()) return NULL;
+  AXUIElementRef app = AXUIElementCreateApplication(pid);
+  if (!app) return NULL;
+  AXUIElementSetMessagingTimeout(app, 0.1);
+  CFStringRef result = verba_copy_selected_text(app);
+  // Electron apps (Slack, VS Code, Discord, ...) expose no accessibility tree until
+  // a client sets AXManualAccessibility. The tree builds asynchronously, so retry
+  // briefly. Other apps reject the attribute and keep returning nothing.
+  if (!result &&
+      AXUIElementSetAttributeValue(app, CFSTR("AXManualAccessibility"), kCFBooleanTrue) == kAXErrorSuccess) {
+    for (int attempt = 0; attempt < 8 && !result; attempt++) {
+      usleep(40 * 1000);
+      result = verba_copy_selected_text(app);
+    }
+  }
+  CFRelease(app);
+  return result;
 }

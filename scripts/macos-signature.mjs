@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 export function signatureInfo(path) {
   // codesign writes its display output to stderr.
@@ -21,6 +22,16 @@ export function verifyStableSignature(path) {
   return signature;
 }
 
+// macOS silently denies anything whose entitlement is missing, so a build must
+// carry every entitlement the project declares.
+export function verifyEntitlements(path, entitlementsPlist) {
+  const declared = [...readFileSync(entitlementsPlist, 'utf8').matchAll(/<key>([^<]+)<\/key>/g)].map((m) => m[1]);
+  const result = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', '-', '--xml', path], { encoding: 'utf8' });
+  const signed = result.stdout + result.stderr;
+  const missing = declared.filter((key) => !signed.includes(`<key>${key}</key>`));
+  if (missing.length) throw new Error(`This build is missing entitlements: ${missing.join(', ')}. Rebuild before installing.`);
+}
+
 export function verifySigningContinuity(previous, next) {
   const newSignature = verifyStableSignature(next);
   const oldSignature = signatureInfo(previous);
@@ -28,9 +39,16 @@ export function verifySigningContinuity(previous, next) {
     console.log('Migrating from temporary signing. macOS may require granting access once for the new identity.');
     return;
   }
+  // Moving a local build onto Apple's Developer ID is the one deliberate identity change:
+  // it is what distributed builds use. Never allow the reverse, or a switch between two IDs.
+  const isDeveloperId = (signature) => /^Developer ID Application: /.test(signature.authority ?? '');
+  if (isDeveloperId(newSignature) && !isDeveloperId(oldSignature)) {
+    console.log(`Migrating to ${newSignature.authority}. macOS will ask for Accessibility and Microphone once more.`);
+    return;
+  }
   for (const [path, requirement] of [[next, oldSignature.requirement], [previous, newSignature.requirement]]) {
     if (!requirement) throw new Error('Previous signing identity cannot be verified.');
-    const result = spawnSync('/usr/bin/codesign', ['--verify', '--strict', '-R', requirement, path], { encoding: 'utf8' });
+    const result = spawnSync('/usr/bin/codesign', ['--verify', '--strict', `-R=${requirement}`, path], { encoding: 'utf8' });
     if (result.error || result.status !== 0) {
       throw new Error('The update uses a different signing identity. Keep the original certificate to preserve macOS permissions.');
     }

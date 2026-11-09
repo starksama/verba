@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyStableSignature, verifySigningContinuity } from './macos-signature.mjs';
+import { verifyEntitlements, verifyStableSignature, verifySigningContinuity } from './macos-signature.mjs';
 
 if (process.platform !== 'darwin') throw new Error('App installation requires macOS.');
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -23,6 +23,7 @@ const bundleIdentifier = execFileSync('/usr/libexec/PlistBuddy', [
 ], { encoding: 'utf8' }).trim();
 if (bundleIdentifier !== identity.bundleIdentifier) throw new Error('Build identity does not match the app being installed.');
 verifyStableSignature(source);
+verifyEntitlements(source, join(rootDir, 'src-tauri/Entitlements.plist'));
 if (existsSync(destination)) verifySigningContinuity(destination, source);
 const processes = execFileSync('ps', ['-axo', 'comm='], { encoding: 'utf8' });
 if (processes.split('\n').some((command) => command.trim() === executable)) {

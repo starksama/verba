@@ -74,10 +74,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 pub fn create(dir: &Path, mode: &str, source: Option<String>) -> io::Result<Recording> {
     fs::create_dir_all(dir)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let now = now_ms();
     let recording = Recording {
         id: format!(
             "recording-{now}-{}-{}",
@@ -224,6 +221,40 @@ pub fn repair_wav(path: &Path) -> io::Result<()> {
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid WAV chunk"))?;
         file.seek(SeekFrom::Start(next))?;
     }
+}
+
+/// Deletes recordings older than `max_age_ms`, keeping anything still being captured
+/// or transcribed. Transcripts live in history, so only the audio and its sidecars go.
+pub fn prune(dir: &Path, max_age_ms: u64, now_ms: u64) -> io::Result<usize> {
+    let cutoff = now_ms.saturating_sub(max_age_ms);
+    let mut removed = 0;
+    for recording in list(dir)? {
+        if recording.created_at_ms >= cutoff
+            || matches!(recording.status.as_str(), "recording" | "processing")
+        {
+            continue;
+        }
+        for path in [
+            recording.audio_path(dir),
+            dir.join(format!("{}.json", recording.id)),
+            dir.join(format!("{}.json.recovery-backup", recording.id)),
+        ] {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 pub fn recover(dir: &Path) -> io::Result<usize> {
@@ -557,6 +588,35 @@ mod tests {
         );
         fs::remove_dir_all(d).unwrap();
     }
+    #[test]
+    fn prune_removes_only_expired_finished_recordings() {
+        let d = dir();
+        let day = 24 * 60 * 60 * 1000;
+        let now = 100 * day;
+        let make = |age_days: u64, status: &str| {
+            let mut r = create(&d, "hold", None).unwrap();
+            r.created_at_ms = now - age_days * day;
+            r.status = status.into();
+            r.save(&d).unwrap();
+            fs::write(r.audio_path(&d), b"RIFF").unwrap();
+            r
+        };
+        let expired = make(6, "completed");
+        let expired_failed = make(30, "failed");
+        let recent = make(1, "completed");
+        let in_flight = make(6, "processing");
+
+        assert_eq!(prune(&d, 5 * day, now).unwrap(), 2);
+        for gone in [&expired, &expired_failed] {
+            assert!(!gone.audio_path(&d).exists());
+            assert!(!d.join(format!("{}.json", gone.id)).exists());
+        }
+        for kept in [&recent, &in_flight] {
+            assert!(kept.audio_path(&d).exists());
+        }
+        assert_eq!(prune(&d, 5 * day, now).unwrap(), 0);
+    }
+
     #[test]
     fn rejects_recording_path_traversal() {
         let d = dir();

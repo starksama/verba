@@ -8,7 +8,7 @@
     <script>
       (() => {
         try {
-          const preference = localStorage.getItem('verba:theme-mode:v1') || 'light';
+          const preference = localStorage.getItem('verba:theme-mode:v1') || 'system';
           const isLight =
             preference === 'light' ||
             (preference === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
@@ -16,7 +16,7 @@
           document.documentElement.dataset.themePreference = preference;
         } catch {
           document.documentElement.dataset.theme = 'light';
-          document.documentElement.dataset.themePreference = 'light';
+          document.documentElement.dataset.themePreference = 'system';
         }
       })();
     </script>
@@ -28,547 +28,333 @@
       <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true"></div>
 
       <aside id="workspace-sidebar" class="sidebar" aria-label="Workspace navigation">
-        <div class="sidebar-surface">
-          <div class="brand-lockup">
-            <img id="sidebar-brand-icon" class="sidebar-brand-icon" alt="" aria-hidden="true" />
-            <div class="brand-copy">
-              <p id="sidebar-brand-name" class="sidebar-title">Verba</p>
-            </div>
+        <div class="brand-lockup" data-tauri-drag-region>
+          <img id="sidebar-brand-icon" class="sidebar-brand-icon" alt="" aria-hidden="true" />
+          <p id="sidebar-brand-name" class="sidebar-title">Verba</p>
+        </div>
+
+        <nav class="sidebar-nav" role="tablist" aria-orientation="vertical" aria-label="Workspace sections">
+          <button id="tab-home" class="sidebar-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="tab-home-panel" data-tab-target="home" tabindex="0">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
+            <span class="sidebar-tab-label">Home</span>
+          </button>
+          <button id="tab-history" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tab-history-panel" data-tab-target="history" tabindex="-1">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg>
+            <span class="sidebar-tab-label">History</span>
+          </button>
+          <button id="tab-rewrite" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tab-rewrite-panel" data-tab-target="rewrite" tabindex="-1">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/><path d="m13.5 6.5 3 3"/></svg>
+            <span class="sidebar-tab-label">Rewrite</span>
+          </button>
+          <button id="tab-vocabulary" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tab-vocabulary-panel" data-tab-target="vocabulary" tabindex="-1">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5A1.5 1.5 0 0 1 6.5 4H19v13H6.5A1.5 1.5 0 0 0 5 18.5z"/><path d="M5 18.5A1.5 1.5 0 0 0 6.5 20H19v-3"/><path d="M9 8.5h6"/></svg>
+            <span class="sidebar-tab-label">Vocabulary</span>
+            <span id="vocabulary-badge" class="sidebar-badge" hidden></span>
+          </button>
+          <button id="tab-settings" class="sidebar-tab" type="button" role="tab" aria-selected="false" aria-controls="tab-settings-panel" data-tab-target="settings" tabindex="-1">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+            <span class="sidebar-tab-label">Settings</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div id="status-banner" class="status-pill" data-status-tone="ready" role="status" aria-live="polite">
+            <span class="status-indicator" aria-hidden="true"></span>
+            <p id="status" class="status-text">Ready</p>
           </div>
-
-          <nav class="sidebar-nav" role="tablist" aria-orientation="vertical" aria-label="Workspace sections">
-            <button
-              id="tab-home"
-              class="sidebar-tab is-active"
-              type="button"
-              role="tab"
-              aria-selected="true"
-              aria-controls="tab-home-panel"
-              data-tab-target="home"
-              tabindex="0"
-            >
-              <span class="sidebar-tab-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M3.5 10.5 12 4l8.5 6.5"></path>
-                  <path d="M6.5 9.5V20h11V9.5"></path>
-                </svg>
-              </span>
-              <span class="sidebar-tab-copy">
-                <span class="sidebar-tab-label">Home</span>
-              </span>
-            </button>
-
-            <button
-              id="tab-dictation"
-              class="sidebar-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="tab-dictation-panel"
-              data-tab-target="dictation"
-              tabindex="-1"
-            >
-              <span class="sidebar-tab-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="9" y="4.5" width="6" height="11" rx="3"></rect>
-                  <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"></path>
-                  <path d="M12 17v3"></path>
-                  <path d="M9 20h6"></path>
-                </svg>
-              </span>
-              <span class="sidebar-tab-copy">
-                <span class="sidebar-tab-label">Dictation</span>
-              </span>
-            </button>
-
-            <button
-              id="tab-history"
-              class="sidebar-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="tab-history-panel"
-              data-tab-target="history"
-              tabindex="-1"
-            >
-              <span class="sidebar-tab-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4.5 12A7.5 7.5 0 1 0 12 4.5"></path>
-                  <path d="M4.5 5.5V12H11"></path>
-                  <path d="M12 8.25v4.25l2.75 1.75"></path>
-                </svg>
-              </span>
-              <span class="sidebar-tab-copy">
-                <span class="sidebar-tab-label">History</span>
-              </span>
-            </button>
-
-            <button
-              id="tab-settings"
-              class="sidebar-tab"
-              type="button"
-              role="tab"
-              aria-selected="false"
-              aria-controls="tab-settings-panel"
-              data-tab-target="settings"
-              tabindex="-1"
-            >
-              <span class="sidebar-tab-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 8.25a3.75 3.75 0 1 0 0 7.5 3.75 3.75 0 0 0 0-7.5Z"></path>
-                  <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1.75 1.75 0 0 1 0 2.45 1.75 1.75 0 0 1-2.45 0l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V19.5A1.5 1.5 0 0 1 14 21h-4a1.5 1.5 0 0 1-1.5-1.5v-.35a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.75 1.75 0 0 1-2.45 0 1.75 1.75 0 0 1 0-2.45l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4.5A1.5 1.5 0 0 1 3 13v-2a1.5 1.5 0 0 1 1.5-1.5h.35a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.75 1.75 0 0 1 0-2.45 1.75 1.75 0 0 1 2.45 0l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4.5A1.5 1.5 0 0 1 10 3h4a1.5 1.5 0 0 1 1.5 1.5v.35a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.75 1.75 0 0 1 2.45 0 1.75 1.75 0 0 1 0 2.45l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.35A1.5 1.5 0 0 1 21 11v2a1.5 1.5 0 0 1-1.5 1.5h-.35a1 1 0 0 0-.9.6Z"></path>
-                </svg>
-              </span>
-              <span class="sidebar-tab-copy">
-                <span class="sidebar-tab-label">Settings</span>
-              </span>
-            </button>
-          </nav>
-
-          <div class="sidebar-bottom">
-            <div class="sidebar-footer">
-              <button
-                id="sidebar-toggle-btn"
-                type="button"
-                class="ui-button ui-button-secondary icon-button"
-                aria-label="Collapse sidebar"
-                aria-expanded="true"
-              >
-                <span class="sidebar-toggle-icon" aria-hidden="true">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M15 18l-6-6 6-6"></path>
-                  </svg>
-                </span>
-              </button>
-            </div>
-          </div>
+          <button id="sidebar-toggle-btn" type="button" class="icon-button sidebar-toggle" aria-label="Collapse sidebar" aria-expanded="true">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2.5"/><path d="M9.5 5v14"/></svg>
+          </button>
         </div>
       </aside>
 
       <section class="workspace-main">
-        <header class="workspace-header">
-          <div class="workspace-header-copy">
-            <h1 id="workspace-view-title">Home</h1>
-          </div>
-
-          <div class="workspace-header-meta">
-            <div class="chips" aria-label="Shortcut hints">
-              <span class="chip">
-                <span class="chip-label">Hold</span>
-                <span id="shortcut-hold-hint" class="shortcut-keyset">
-                  <span class="hotkey-token">Cmd</span>
-                  <span class="hotkey-token">Space</span>
-                </span>
-              </span>
-              <span class="chip">
-                <span class="chip-label">Toggle</span>
-                <span id="shortcut-toggle-hint" class="shortcut-keyset">
-                  <span class="hotkey-token">Option</span>
-                  <span class="hotkey-token">Space</span>
-                </span>
-              </span>
+        <header class="workspace-header" data-tauri-drag-region>
+          <h1 id="workspace-view-title">Home</h1>
+          <div class="workspace-header-actions">
+            <div class="header-actions" data-header-for="rewrite" hidden>
+              <span id="rewrite-save-state" class="save-state" aria-live="polite"></span>
+              <button id="rewrite-prompt-add-btn" type="button" class="ui-button">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                New prompt
+              </button>
             </div>
-            <div id="status-banner" class="status-banner" data-status-tone="ready" role="status" aria-live="polite">
-              <span class="status-indicator" aria-hidden="true"></span>
-              <div class="status-banner-copy">
-                <p id="status" class="status-text">Ready</p>
-              </div>
+            <div class="header-actions" data-header-for="settings" hidden>
+              <button id="reopen-onboarding-btn" type="button" class="ui-button ui-button-quiet">Setup guide</button>
+              <button id="save-settings-btn" type="submit" form="settings-form" class="ui-button">Save</button>
             </div>
           </div>
         </header>
 
-        <section
-          id="tab-home-panel"
-          class="tab-panel is-active"
-          role="tabpanel"
-          aria-labelledby="tab-home"
-          data-tab-panel="home"
-        >
-          <section class="page-surface home-overview">
-            <div class="home-dashboard">
-              <div class="home-topbar">
-                <div class="home-heading">
-                  <h2>Capture text</h2>
-                </div>
-
-                <div class="buttons home-actions">
-                  <button id="home-toggle-btn" type="button" class="ui-button">Start recording</button>
+        <div class="workspace-scroll">
+          <!-- Home -->
+          <section id="tab-home-panel" class="tab-panel is-active" role="tabpanel" aria-labelledby="tab-home" data-tab-panel="home">
+            <section id="home-hero" class="hero-card" aria-label="Dictation">
+              <div class="hero-copy">
+                <p id="hero-title" class="hero-title" aria-live="polite">Ready</p>
+                <div class="hero-shortcuts" aria-label="Shortcuts">
+                  <span class="hero-shortcut"><span id="shortcut-hold-hint" class="shortcut-keyset"></span>hold to speak</span>
+                  <span class="hero-shortcut"><span id="shortcut-toggle-hint" class="shortcut-keyset"></span>hands-free</span>
+                  <span id="mode-status-text" class="hero-meta"></span>
                 </div>
               </div>
-
-              <div class="home-stats" aria-label="Usage summary">
-                <div class="home-stat">
-                  <span class="summary-label">Active days</span>
-                  <strong id="home-stat-days">0</strong>
-                </div>
-                <div class="home-stat">
-                  <span class="summary-label">Words captured</span>
-                  <strong id="home-stat-words">0</strong>
-                </div>
-                <div class="home-stat">
-                  <span class="summary-label">Time saved</span>
-                  <strong id="home-stat-saved">0m</strong>
-                </div>
+              <div class="hero-action">
+                <div id="voice-bars" class="voice-bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+                <button id="home-toggle-btn" type="button" class="record-button" aria-label="Start recording">
+                  <svg class="icon icon-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V20.5"/></svg>
+                  <span class="record-stop" aria-hidden="true"></span>
+                </button>
               </div>
-            </div>
-
-            <section class="home-recent">
-              <p class="summary-label">Recent transcripts</p>
-              <p id="home-recent-empty" class="hint">Record once; your latest transcripts appear here.</p>
-              <div id="home-recent-feed" class="home-recent-feed" aria-live="polite"></div>
             </section>
+
+            <section class="card activity-card" aria-label="Activity">
+              <div class="card-header">
+                <p class="card-title">Last 14 days</p>
+                <span id="home-activity-summary" class="card-meta"></span>
+              </div>
+              <div class="activity-metrics">
+                <div class="metric">
+                  <span class="metric-label"><span class="legend-swatch is-dictation"></span>Dictated</span>
+                  <span class="metric-value"><span id="home-stat-words">0</span><span class="metric-unit">words</span></span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label"><span class="legend-swatch is-rewrite"></span>Rewritten</span>
+                  <span class="metric-value"><span id="home-stat-rewritten">0</span><span class="metric-unit">words</span></span>
+                </div>
+                <div class="metric" title="Estimated against typing at 40 words per minute">
+                  <span class="metric-label">Time saved</span>
+                  <span class="metric-value"><span id="home-stat-saved">0m</span></span>
+                </div>
+                <div class="metric">
+                  <span class="metric-label">Streak</span>
+                  <span class="metric-value"><span id="home-stat-streak">0</span><span id="home-stat-streak-unit" class="metric-unit">days</span></span>
+                </div>
+              </div>
+              <div id="home-activity-chart" class="activity-chart"></div>
+            </section>
+
+            <div class="home-columns">
+              <section class="card" aria-label="Recent activity">
+                <div class="card-header">
+                  <p class="card-title">Recent</p>
+                  <button type="button" class="link-button" data-go-tab="history">View all</button>
+                </div>
+                <p id="home-recent-empty" class="empty-state">Dictate or rewrite once and it shows up here.</p>
+                <div id="home-recent-feed" class="row-list" aria-live="polite"></div>
+              </section>
+
+              <div class="home-side">
+                <section class="card" aria-label="Rewrite prompts">
+                  <div class="card-header">
+                    <p class="card-title">Rewrite</p>
+                    <button type="button" class="link-button" data-go-tab="rewrite">Manage</button>
+                  </div>
+                  <div id="home-rewrite-list" class="mini-list"></div>
+                </section>
+                <section class="card" aria-label="Vocabulary">
+                  <div class="card-header">
+                    <p class="card-title">Vocabulary</p>
+                    <button type="button" class="link-button" data-go-tab="vocabulary">Open</button>
+                  </div>
+                  <p id="home-vocabulary-summary" class="card-body-text">No terms yet</p>
+                </section>
+              </div>
+            </div>
           </section>
-        </section>
 
-        <section
-          id="tab-dictation-panel"
-          class="tab-panel"
-          role="tabpanel"
-          aria-labelledby="tab-dictation"
-          data-tab-panel="dictation"
-          hidden
-        >
-          <section id="recording-card" class="page-surface dictation-stage">
-            <div class="card-head">
-              <p class="eyebrow">Live capture</p>
-              <h2>Dictation</h2>
-              <p id="mode-status-text" class="subtle">
-                Ready.
-              </p>
-            </div>
-
-            <div class="meter-panel">
-              <div class="meter-row">
-                <span>Input level</span>
-                <span id="mic-level-value">0%</span>
+          <!-- History -->
+          <section id="tab-history-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-history" data-tab-panel="history" hidden>
+            <div class="toolbar">
+              <div class="segmented" role="radiogroup" aria-label="Filter history">
+                <button type="button" class="segmented-option is-active" data-history-filter="all" role="radio" aria-checked="true">All</button>
+                <button type="button" class="segmented-option" data-history-filter="dictation" role="radio" aria-checked="false">Dictation</button>
+                <button type="button" class="segmented-option" data-history-filter="rewrite" role="radio" aria-checked="false">Rewrite</button>
               </div>
-              <div class="meter-track" aria-hidden="true">
-                <div id="mic-level-bar"></div>
-              </div>
-            </div>
-
-            <div class="buttons">
-              <button id="toggle-btn" type="button" class="ui-button">Start recording</button>
-            </div>
-
-            <div id="draft-restore-banner" class="draft-restore hidden" role="status" aria-live="polite">
-              <p class="summary-label">Saved text</p>
-              <p id="draft-restore-preview" class="hint">Text is available.</p>
-              <div class="buttons">
-                <button id="draft-restore-copy-btn" type="button" class="ui-button ui-button-secondary">Copy</button>
-                <button id="draft-restore-dismiss-btn" type="button" class="ui-button ui-button-secondary">Dismiss</button>
-              </div>
-            </div>
-          </section>
-        </section>
-
-        <section
-          id="tab-history-panel"
-          class="tab-panel"
-          role="tabpanel"
-          aria-labelledby="tab-history"
-          data-tab-panel="history"
-          hidden
-        >
-          <section class="page-surface history-page">
-            <div class="history-toolbar">
-              <div class="history-toolbar-copy">
-                <p class="summary-label">Archive</p>
-                <strong id="history-count" class="history-count">0 transcripts</strong>
-              </div>
-              <label class="ui-field history-search-field">
-                <span class="ui-label">Search</span>
-                <input id="history-search" class="ui-input" type="search" placeholder="Search transcripts" />
+              <label class="search-field">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+                <input id="history-search" type="search" placeholder="Search" aria-label="Search history" />
               </label>
+              <span id="history-count" class="toolbar-meta">0 items</span>
             </div>
-            <details id="saved-recordings" class="saved-recordings" hidden>
+            <p id="history-empty" class="empty-state">Nothing yet.</p>
+            <div id="history-feed" class="history-feed" aria-live="polite"></div>
+            <button id="history-more-btn" type="button" class="link-button history-more" hidden>Show more</button>
+            <details id="saved-recordings" class="card saved-recordings" hidden>
               <summary id="saved-recordings-summary">Saved audio</summary>
               <div id="saved-recordings-list" class="saved-recordings-list"></div>
+              <button id="saved-recordings-more-btn" type="button" class="link-button saved-recordings-more" hidden>Show more</button>
             </details>
-            <p id="history-empty" class="hint">No transcripts yet. Record once from Home or with your shortcut.</p>
-            <div id="history-feed" class="history-feed" aria-live="polite"></div>
           </section>
-        </section>
 
-        <section
-          id="tab-settings-panel"
-          class="tab-panel"
-          role="tabpanel"
-          aria-labelledby="tab-settings"
-          data-tab-panel="settings"
-          hidden
-        >
-          <section class="settings-page">
-            <div class="settings-shell">
-              <aside class="settings-nav-panel">
-                <div class="settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
-                  <button
-                    id="settings-tab-general"
-                    type="button"
-                    class="settings-nav-btn is-active"
-                    data-settings-target="general"
-                    role="tab"
-                    aria-selected="true"
-                    aria-controls="settings-panel-general"
-                    tabindex="0"
-                  >
-                    <span class="settings-nav-title">General</span>
-                  </button>
-                  <button
-                    id="settings-tab-shortcuts"
-                    type="button"
-                    class="settings-nav-btn"
-                    data-settings-target="shortcuts"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="settings-panel-shortcuts"
-                    tabindex="-1"
-                  >
-                    <span class="settings-nav-title">Shortcuts</span>
-                  </button>
-                  <button
-                    id="settings-tab-ai"
-                    type="button"
-                    class="settings-nav-btn"
-                    data-settings-target="ai"
-                    role="tab"
-                    aria-selected="false"
-                    aria-controls="settings-panel-ai"
-                    tabindex="-1"
-                  >
-                    <span class="settings-nav-title">AI</span>
-                  </button>
+          <!-- Rewrite -->
+          <section id="tab-rewrite-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-rewrite" data-tab-panel="rewrite" hidden>
+            <p class="page-lede">Select text in any app, press a prompt's shortcut, and the selection is rewritten in place.</p>
+            <p id="rewrite-validation" class="field-message error hidden" role="status" aria-live="polite"></p>
+            <div id="rewrite-prompt-list" class="prompt-grid" aria-label="Rewrite prompts"></div>
+            <p id="rewrite-empty" class="empty-state" hidden>No prompts yet.</p>
+          </section>
+
+          <!-- Vocabulary -->
+          <section id="tab-vocabulary-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-vocabulary" data-tab-panel="vocabulary" hidden>
+            <p class="page-lede">Names and terms Verba should always spell your way, in dictation, polishing, and rewrites.</p>
+            <form id="vocabulary-add-form" class="vocabulary-add">
+              <input id="vocabulary-add-input" class="ui-input" type="text" placeholder="Add a term" aria-label="Add a term" autocomplete="off" spellcheck="false" />
+              <button type="submit" class="ui-button">Add</button>
+            </form>
+
+            <section id="vocabulary-suggestions" class="card suggestions-card" hidden aria-label="Suggested terms">
+              <div class="card-header">
+                <p class="card-title">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v3M12 17v3M4 12h3M17 12h3M6.5 6.5l2 2M15.5 15.5l2 2M17.5 6.5l-2 2M8.5 15.5l-2 2"/></svg>
+                  Suggested from your edits
+                </p>
+              </div>
+              <div id="vocabulary-suggestion-list" class="suggestion-list"></div>
+            </section>
+
+            <section class="card" aria-label="Your terms">
+              <div class="card-header">
+                <p class="card-title">Your terms</p>
+                <span id="vocabulary-count" class="card-meta">0</span>
+              </div>
+              <p id="vocabulary-empty" class="empty-state">Add names, products, and jargon you use often.</p>
+              <div id="vocabulary-list" class="term-list"></div>
+            </section>
+          </section>
+
+          <!-- Settings -->
+          <section id="tab-settings-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-settings" data-tab-panel="settings" hidden>
+            <div class="tabs" role="tablist" aria-label="Settings sections">
+              <button id="settings-tab-general" type="button" class="tab is-active" data-settings-target="general" role="tab" aria-selected="true" aria-controls="settings-panel-general" tabindex="0">General</button>
+              <button id="settings-tab-shortcuts" type="button" class="tab" data-settings-target="shortcuts" role="tab" aria-selected="false" aria-controls="settings-panel-shortcuts" tabindex="-1">Shortcuts</button>
+              <button id="settings-tab-ai" type="button" class="tab" data-settings-target="ai" role="tab" aria-selected="false" aria-controls="settings-panel-ai" tabindex="-1">AI</button>
+            </div>
+
+            <form id="settings-form" class="settings-form">
+              <section id="settings-panel-general" class="settings-panel is-active" data-settings-panel="general" role="tabpanel" aria-labelledby="settings-tab-general">
+                <div class="card settings-group">
+                  <label class="settings-row">
+                    <span class="settings-row-label">Appearance</span>
+                    <select id="themeMode" class="ui-select">
+                      <option value="system">System</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
+                  </label>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Record button</span>
+                    <select id="recordingMode" class="ui-select">
+                      <option value="hold">Hold to record</option>
+                      <option value="toggle">Toggle start/stop</option>
+                    </select>
+                  </label>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Language</span>
+                    <select id="language" class="ui-select">
+                      <option value="auto">Auto detect</option>
+                      <option value="en">English</option>
+                      <option value="zh-CN">Chinese (Simplified)</option>
+                      <option value="zh-TW">Chinese (Traditional)</option>
+                      <option value="ja">Japanese</option>
+                      <option value="ko">Korean</option>
+                      <option value="es">Spanish</option>
+                      <option value="fr">French</option>
+                      <option value="de">German</option>
+                    </select>
+                  </label>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Sound cues</span>
+                    <input id="playSoundCues" class="switch" type="checkbox" />
+                  </label>
                 </div>
-              </aside>
+              </section>
 
-              <form id="settings-form" class="settings-form">
-                <div class="settings-toolbar">
-                  <h2>Settings</h2>
-
-                  <div class="buttons settings-actions">
-                    <button id="reopen-onboarding-btn" type="button" class="ui-button ui-button-quiet">
-                      Setup guide
-                    </button>
-                    <button id="save-settings-btn" type="submit" class="ui-button">Save</button>
-                  </div>
-                </div>
-
-                <section
-                  id="settings-panel-general"
-                  class="settings-panel is-active"
-                  data-settings-panel="general"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-general"
-                >
-                  <div class="settings-panel-grid">
-                    <label class="ui-field">
-                      <span class="ui-label">Appearance</span>
-                      <select id="themeMode" class="ui-select">
-                        <option value="system">System</option>
-                        <option value="light">Light</option>
-                        <option value="dark">Dark</option>
-                      </select>
-                    </label>
-
-                    <label class="ui-field">
-                      <span class="ui-label">Recording mode</span>
-                      <select id="recordingMode" class="ui-select">
-                        <option value="hold">Hold to record</option>
-                        <option value="toggle">Toggle start/stop</option>
-                      </select>
-                    </label>
-
-                    <label class="ui-field">
-                      <span class="ui-label">Transcription language</span>
-                      <select id="language" class="ui-select">
-                        <option value="auto">Auto detect</option>
-                        <option value="en">English (en)</option>
-                        <option value="zh-CN">Chinese (Simplified)</option>
-                        <option value="zh-TW">Chinese (Traditional)</option>
-                        <option value="ja">Japanese (ja)</option>
-                        <option value="ko">Korean (ko)</option>
-                        <option value="es">Spanish (es)</option>
-                        <option value="fr">French (fr)</option>
-                        <option value="de">German (de)</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div class="toggle-grid">
-                    <label class="toggle-card checkbox-label">
-                      <input id="playSoundCues" type="checkbox" />
-                      <span>
-                        <strong>Sound cues</strong>
-                      </span>
-                    </label>
-                  </div>
-                </section>
-
-                <section
-                  id="settings-panel-shortcuts"
-                  class="settings-panel"
-                  data-settings-panel="shortcuts"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-shortcuts"
-                  hidden
-                >
-                  <div class="settings-panel-head">
-                    <span id="shortcut-dirty-indicator" class="shortcut-dirty-indicator hidden">Unsaved</span>
-                  </div>
-
-                  <div class="shortcut-list" aria-label="Recording shortcuts">
-                    <section class="shortcut-item">
-                      <div class="shortcut-item-copy">
-                        <span class="ui-label">Hold to speak</span>
-                      </div>
-                      <div class="shortcut-item-body">
-                        <div id="hold-shortcut-list" class="shortcut-entry-list"></div>
-                        <button id="hold-shortcut-add-btn" type="button" class="ui-button ui-button-quiet shortcut-add-btn icon-only" aria-label="Add hold shortcut" title="Add hold shortcut">
-                          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                            <path d="M12 5v14"></path>
-                            <path d="M5 12h14"></path>
-                          </svg>
-                        </button>
-                      </div>
-                      <p id="hold-hotkey-validation" class="field-message hidden" role="status" aria-live="polite"></p>
-                    </section>
-
-                    <section class="shortcut-item">
-                      <div class="shortcut-item-copy">
-                        <span class="ui-label">Hands-free</span>
-                      </div>
-                      <div class="shortcut-item-body">
-                        <div id="toggle-shortcut-list" class="shortcut-entry-list"></div>
-                        <button id="toggle-shortcut-add-btn" type="button" class="ui-button ui-button-quiet shortcut-add-btn icon-only" aria-label="Add hands-free shortcut" title="Add hands-free shortcut">
-                          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-                            <path d="M12 5v14"></path>
-                            <path d="M5 12h14"></path>
-                          </svg>
-                        </button>
-                      </div>
-                      <p id="toggle-hotkey-validation" class="field-message hidden" role="status" aria-live="polite"></p>
-                    </section>
-
-                  </div>
-                </section>
-
-                <section
-                  id="settings-panel-ai"
-                  class="settings-panel"
-                  data-settings-panel="ai"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-ai"
-                  hidden
-                >
-                  <div id="api-key-control" class="api-key-control" data-state="missing">
-                    <div class="api-key-main">
-                      <div class="api-key-state">
-                        <span class="ui-label">OpenAI API key</span>
-                        <span id="api-key-summary" class="api-key-summary">Missing</span>
-                      </div>
-                      <button
-                        id="api-key-edit-btn"
-                        type="button"
-                        class="ui-button ui-button-secondary"
-                        aria-expanded="false"
-                        aria-controls="api-key-editor"
-                      >
-                        Set key
+              <section id="settings-panel-shortcuts" class="settings-panel" data-settings-panel="shortcuts" role="tabpanel" aria-labelledby="settings-tab-shortcuts" hidden>
+                <div class="card settings-group">
+                  <div class="settings-row shortcut-item">
+                    <span class="settings-row-label">Hold to speak</span>
+                    <div class="shortcut-item-body">
+                      <div id="hold-shortcut-list" class="shortcut-entry-list"></div>
+                      <button id="hold-shortcut-add-btn" type="button" class="icon-button" aria-label="Add hold shortcut" title="Add hold shortcut">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
                       </button>
                     </div>
-                    <label id="api-key-editor" class="api-key-editor" hidden>
-                      <input
-                        id="apiKey"
-                        class="ui-input"
-                        type="password"
-                        autocomplete="off"
-                        autocapitalize="off"
-                        spellcheck="false"
-                        placeholder="sk-..."
-                        aria-label="OpenAI API key"
-                      />
-                    </label>
+                    <p id="hold-hotkey-validation" class="field-message hidden" role="status" aria-live="polite"></p>
                   </div>
-
-                  <div class="toggle-grid">
-                    <label class="toggle-card checkbox-label">
-                      <input id="formatEnabled" type="checkbox" />
-                      <span>
-                        <strong>Polishing</strong>
-                      </span>
-                    </label>
-
-                    <fieldset id="polishingOptions" class="polishing-options" aria-label="Polishing options" disabled>
-                      <div class="polishing-option-grid">
-                        <label class="checkbox-label">
-                          <input id="removeFillers" type="checkbox" checked />
-                          <span>Remove fillers</span>
-                        </label>
-                        <label class="checkbox-label">
-                          <input id="consolidateWording" type="checkbox" checked />
-                          <span>Consolidate wording</span>
-                        </label>
-                        <label class="checkbox-label">
-                          <input id="structureText" type="checkbox" checked />
-                          <span>Paragraphs and lists</span>
-                        </label>
-                      </div>
-                      <details class="settings-advanced">
-                        <summary>Custom instructions</summary>
-                        <textarea id="promptTemplate" class="ui-input" rows="4" aria-label="Polishing instructions"></textarea>
-                      </details>
-                    </fieldset>
-
-                    <label class="toggle-card checkbox-label">
-                      <input id="skipFormatterInTerminals" type="checkbox" checked />
-                      <span>
-                        <strong>Skip polishing in terminals</strong>
-                      </span>
-                    </label>
-
-                    <label class="toggle-card checkbox-label">
-                      <input id="includeClipboardContext" type="checkbox" checked />
-                      <span>
-                        <strong>Use clipboard context</strong>
-                      </span>
-                    </label>
-                  </div>
-
-                  <details class="settings-advanced">
-                    <summary>Advanced</summary>
-
-                    <div class="settings-panel-grid">
-                      <label class="ui-field">
-                        <span class="ui-label">API base URL</span>
-                        <input id="apiBaseUrl" class="ui-input" type="text" value="https://api.openai.com/v1" required />
-                      </label>
-
-                      <label class="ui-field">
-                        <span class="ui-label">Whisper model</span>
-                        <input id="whisperModel" class="ui-input" type="text" value="whisper-1" required />
-                      </label>
-
-                      <label class="ui-field">
-                        <span class="ui-label">Polishing model</span>
-                        <input id="formatModel" class="ui-input" type="text" value="gpt-4o-mini" required />
-                      </label>
+                  <div class="settings-row shortcut-item">
+                    <span class="settings-row-label">Hands-free</span>
+                    <div class="shortcut-item-body">
+                      <div id="toggle-shortcut-list" class="shortcut-entry-list"></div>
+                      <button id="toggle-shortcut-add-btn" type="button" class="icon-button" aria-label="Add hands-free shortcut" title="Add hands-free shortcut">
+                        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                      </button>
                     </div>
+                    <p id="toggle-hotkey-validation" class="field-message hidden" role="status" aria-live="polite"></p>
+                  </div>
+                </div>
+                <p class="settings-footnote">Rewrite shortcuts live on each prompt in <button type="button" class="link-button" data-go-tab="rewrite">Rewrite</button>.</p>
+                <span id="shortcut-dirty-indicator" class="shortcut-dirty-indicator hidden">Unsaved</span>
+              </section>
 
-                    <label class="ui-field">
-                      <span class="ui-label">Custom vocabulary</span>
-                      <textarea
-                        id="customVocabulary"
-                        class="ui-input"
-                        rows="3"
-                        placeholder="Names, product terms, acronyms"
-                      ></textarea>
+              <section id="settings-panel-ai" class="settings-panel" data-settings-panel="ai" role="tabpanel" aria-labelledby="settings-tab-ai" hidden>
+                <div class="card settings-group">
+                  <div id="api-key-control" class="settings-row api-key-control" data-state="missing">
+                    <span class="settings-row-label">API key</span>
+                    <div class="api-key-main">
+                      <span id="api-key-summary" class="api-key-summary">Missing</span>
+                      <button id="api-key-edit-btn" type="button" class="ui-button ui-button-secondary" aria-expanded="false" aria-controls="api-key-editor">Set key</button>
+                    </div>
+                    <label id="api-key-editor" class="api-key-editor" hidden>
+                      <input id="apiKey" class="ui-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." aria-label="OpenAI API key" />
                     </label>
-                  </details>
-                </section>
-              </form>
-            </div>
+                  </div>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Polishing</span>
+                    <input id="formatEnabled" class="switch" type="checkbox" />
+                  </label>
+                  <fieldset id="polishingOptions" class="settings-row polishing-options" aria-label="Polishing options" disabled>
+                    <span class="settings-row-label">Polishing does</span>
+                    <div class="check-group">
+                      <label class="check"><input id="removeFillers" type="checkbox" checked /><span>Remove fillers</span></label>
+                      <label class="check"><input id="consolidateWording" type="checkbox" checked /><span>Consolidate wording</span></label>
+                      <label class="check"><input id="structureText" type="checkbox" checked /><span>Paragraphs and lists</span></label>
+                    </div>
+                    <details class="settings-advanced">
+                      <summary>Custom instructions</summary>
+                      <textarea id="promptTemplate" class="ui-input" rows="4" aria-label="Polishing instructions"></textarea>
+                    </details>
+                  </fieldset>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Skip polishing in terminals</span>
+                    <input id="skipFormatterInTerminals" class="switch" type="checkbox" checked />
+                  </label>
+                  <label class="settings-row">
+                    <span class="settings-row-label">Use clipboard context</span>
+                    <input id="includeClipboardContext" class="switch" type="checkbox" checked />
+                  </label>
+                </div>
+
+                <details class="card settings-advanced-card">
+                  <summary>Advanced</summary>
+                  <div class="settings-group">
+                    <label class="settings-row">
+                      <span class="settings-row-label">API base URL</span>
+                      <input id="apiBaseUrl" class="ui-input" type="text" value="https://api.openai.com/v1" required />
+                    </label>
+                    <label class="settings-row">
+                      <span class="settings-row-label">Transcription model</span>
+                      <input id="whisperModel" class="ui-input" type="text" value="whisper-1" required />
+                    </label>
+                    <label class="settings-row">
+                      <span class="settings-row-label">Text model</span>
+                      <input id="formatModel" class="ui-input" type="text" value="gpt-4o-mini" required />
+                    </label>
+                  </div>
+                </details>
+              </section>
+            </form>
           </section>
-        </section>
+        </div>
       </section>
     </main>
 
@@ -582,134 +368,87 @@
     </div>
 
     <div id="onboarding-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" aria-describedby="onboarding-step-indicator">
-      <section class="modal-card onboarding-card modal-elevated">
-        <div class="onboarding-header">
-          <p id="onboarding-step-indicator" class="eyebrow">Step 1 of 5</p>
-          <h2 id="onboarding-title">Welcome</h2>
-        </div>
+      <section class="modal-card onboarding-card">
+        <div class="onboarding-progress" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <p id="onboarding-step-indicator" class="visually-hidden">Step 1 of 4</p>
 
         <section class="onboarding-step" data-onboarding-step="welcome">
-          <p class="subtle">Set the three things Verba needs before your first dictation.</p>
-          <ul class="onboarding-list">
-            <li>Request microphone access.</li>
-            <li>Allow Accessibility so Verba can insert text into other apps.</li>
-            <li>Add an API key and choose your shortcut.</li>
+          <img id="onboarding-mark" class="onboarding-mark" alt="" />
+          <h2 id="onboarding-title" class="onboarding-title">Welcome to Verba</h2>
+          <p class="onboarding-lede">Speak in any app and get clean text back. Setup takes about a minute.</p>
+          <ul class="onboarding-points">
+            <li><span class="point-icon is-voice"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V20.5"/></svg></span><span><strong>Dictate</strong> Hold a shortcut, talk, let go.</span></li>
+            <li><span class="point-icon is-text"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 4.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/><path d="m13.5 6.5 3 3"/></svg></span><span><strong>Rewrite</strong> Select text, press a prompt&rsquo;s shortcut.</span></li>
           </ul>
         </section>
 
         <section class="onboarding-step hidden" data-onboarding-step="permissions">
-          <h3>Access</h3>
-          <p id="onboarding-permissions-copy" class="subtle">
-            Click Request access for Microphone. Apps cannot be added manually in System Settings.
-          </p>
+          <h2 class="onboarding-title">Allow access</h2>
+          <p id="onboarding-permissions-copy" class="onboarding-lede">macOS asks once for each.</p>
           <div class="permission-list">
-            <section id="onboarding-accessibility-row" class="permission-row" data-permission-state="checking">
-              <div>
-                <span class="permission-kicker">Required for text insertion</span>
-                <h4>Accessibility</h4>
-                <p id="onboarding-accessibility-status" class="hint">Checking</p>
-              </div>
-              <div class="buttons">
-                <button id="onboarding-check-accessibility-btn" type="button" class="ui-button ui-button-secondary">
-                  Check again
-                </button>
-                <button id="onboarding-open-accessibility-settings-btn" type="button" class="ui-button ui-button-secondary">
-                  Open Accessibility
-                </button>
-                <button id="onboarding-reset-accessibility-permission-btn" type="button" class="ui-button ui-button-secondary">
-                  Reset
-                </button>
-              </div>
-            </section>
             <section id="onboarding-microphone-row" class="permission-row" data-permission-state="checking">
-              <div>
-                <span class="permission-kicker">Required for recording</span>
-                <h4>Microphone</h4>
-                <p id="onboarding-microphone-status" class="hint">Checking</p>
+              <span class="permission-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V20.5"/></svg></span>
+              <div class="permission-copy">
+                <h3>Microphone</h3>
+                <p id="onboarding-microphone-status" class="permission-status">Checking</p>
               </div>
-              <div class="buttons">
-                <button id="onboarding-open-microphone-settings-btn" type="button" class="ui-button ui-button-secondary">
-                  Request access
-                </button>
-                <button id="onboarding-check-microphone-btn" type="button" class="ui-button ui-button-quiet">
-                  Check again
-                </button>
+              <div class="permission-actions">
+                <button id="onboarding-open-microphone-settings-btn" type="button" class="ui-button">Allow</button>
               </div>
+              <span class="permission-done"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5"/></svg>Allowed</span>
+            </section>
+            <section id="onboarding-accessibility-row" class="permission-row" data-permission-state="checking">
+              <span class="permission-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M7.5 10h1M11.5 10h1M15.5 10h1M8 14h8"/></svg></span>
+              <div class="permission-copy">
+                <h3>Accessibility</h3>
+                <p id="onboarding-accessibility-status" class="permission-status">Checking</p>
+              </div>
+              <div class="permission-actions">
+                <button id="onboarding-open-accessibility-settings-btn" type="button" class="ui-button">Open Settings</button>
+              </div>
+              <span class="permission-done"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5"/></svg>Allowed</span>
             </section>
           </div>
         </section>
 
         <section class="onboarding-step hidden" data-onboarding-step="api">
-          <h3>API setup</h3>
-
+          <h2 class="onboarding-title">Connect OpenAI</h2>
+          <p class="onboarding-lede">Verba transcribes with your own OpenAI API key. It&rsquo;s stored only on this Mac.</p>
           <label class="ui-field">
-            <span class="ui-label">OpenAI API key</span>
-            <input id="onboarding-api-key" class="ui-input" type="password" autocomplete="off" placeholder="sk-..." />
+            <span class="ui-label">API key</span>
+            <input id="onboarding-api-key" class="ui-input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
           </label>
           <p id="onboarding-api-key-validation" class="field-message" role="status" aria-live="polite"></p>
-
-          <label class="ui-field">
-            <span class="ui-label">API base URL</span>
-            <input id="onboarding-api-base-url" class="ui-input" type="text" value="https://api.openai.com/v1" />
-          </label>
-          <p id="onboarding-api-base-url-validation" class="field-message" role="status" aria-live="polite"></p>
-          <button id="onboarding-api-base-url-fix-btn" type="button" class="ui-button ui-button-secondary preset-btn hidden">
-            Fix URL format
-          </button>
+          <p class="onboarding-hint">Create a key at platform.openai.com/api-keys</p>
+          <details class="onboarding-advanced">
+            <summary>Custom endpoint</summary>
+            <label class="ui-field">
+              <span class="ui-label">API base URL</span>
+              <input id="onboarding-api-base-url" class="ui-input" type="text" spellcheck="false" value="https://api.openai.com/v1" />
+            </label>
+            <p id="onboarding-api-base-url-validation" class="field-message" role="status" aria-live="polite"></p>
+            <button id="onboarding-api-base-url-fix-btn" type="button" class="ui-button ui-button-secondary preset-btn hidden">Fix URL format</button>
+          </details>
         </section>
 
-        <section class="onboarding-step hidden" data-onboarding-step="quick-setup">
-          <h3>Mode, language, shortcut</h3>
-
-          <div class="settings-panel-grid">
-            <label class="ui-field">
-              <span class="ui-label">Recording mode</span>
-              <select id="onboarding-recording-mode" class="ui-select">
-                <option value="hold">Hold to record</option>
-                <option value="toggle">Toggle start/stop</option>
-              </select>
-            </label>
-
-            <label class="ui-field">
-              <span class="ui-label">Language</span>
-              <select id="onboarding-language" class="ui-select">
-                <option value="auto">Auto detect</option>
-                <option value="en">English (en)</option>
-                <option value="zh-CN">Chinese (Simplified)</option>
-                <option value="zh-TW">Chinese (Traditional)</option>
-                <option value="ja">Japanese (ja)</option>
-                <option value="ko">Korean (ko)</option>
-                <option value="es">Spanish (es)</option>
-                <option value="fr">French (fr)</option>
-                <option value="de">German (de)</option>
-              </select>
-            </label>
+        <section class="onboarding-step hidden" data-onboarding-step="try">
+          <h2 class="onboarding-title">Try it</h2>
+          <p class="onboarding-lede">Hold your shortcut, say a sentence, then let go.</p>
+          <div class="try-shortcut">
+            <input id="onboarding-hotkey" class="hotkey-display" type="text" value="" hidden readonly />
+            <button id="onboarding-hotkey-capture-btn" type="button" class="shortcut-trigger" aria-describedby="onboarding-hotkey-validation" title="Click to change"></button>
           </div>
-
-          <label class="ui-field hotkey-field">
-            <span class="ui-label">Hold to speak</span>
-            <input id="onboarding-hotkey" class="hotkey-display" type="text" value="Cmd+Shift+Space" hidden readonly />
-            <button
-              id="onboarding-hotkey-capture-btn"
-              type="button"
-              class="shortcut-trigger"
-              aria-describedby="onboarding-hotkey-validation"
-            ></button>
-          </label>
-
           <p id="onboarding-hotkey-validation" class="field-message" role="status" aria-live="polite"></p>
+          <textarea id="onboarding-try-input" class="try-input" rows="3" placeholder="Your words appear here" aria-label="Practice area"></textarea>
+          <p id="onboarding-try-result" class="try-result" role="status" hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5"/></svg>That&rsquo;s it. It works the same in every app.</p>
         </section>
 
-        <section class="onboarding-step hidden" data-onboarding-step="finish">
-          <h3>Setup complete</h3>
-          <p class="subtle">Save now, then start from Home or use your shortcut in another app.</p>
-        </section>
-
-        <div class="buttons onboarding-actions">
-          <button id="onboarding-skip-btn" type="button" class="ui-button ui-button-secondary">Do later</button>
-          <button id="onboarding-back-btn" type="button" class="ui-button ui-button-secondary">Back</button>
-          <button id="onboarding-next-btn" type="button" class="ui-button">Next</button>
-          <button id="onboarding-finish-btn" type="button" class="ui-button hidden">Finish setup</button>
+        <div class="onboarding-actions">
+          <button id="onboarding-skip-btn" type="button" class="link-button">Skip setup</button>
+          <span class="onboarding-actions-spacer"></span>
+          <button id="onboarding-back-btn" type="button" class="ui-button ui-button-quiet">Back</button>
+          <button id="onboarding-next-btn" type="button" class="ui-button">Get started</button>
+          <button id="onboarding-finish-btn" type="button" class="ui-button hidden">Start using Verba</button>
         </div>
       </section>
     </div>

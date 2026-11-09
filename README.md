@@ -6,6 +6,12 @@
 
 Verba is a macOS desktop dictation app. Press a shortcut, speak, and insert the transcript back into the app you were using.
 
+<p align="center">
+  <img src="docs/github/screenshot.png" alt="Verba home: record card, 14-day activity and recent dictations" width="820">
+</p>
+
+**[Download for macOS (Apple Silicon)](https://github.com/starksama/verba/releases/latest)**: signed and notarized, so it opens without a security warning.
+
 ## Run Locally
 
 Requirements:
@@ -50,8 +56,15 @@ Keep the everyday app at `/Applications/Verba.app`. Before the first local macOS
 `npm run setup:macos-signing` once. It creates **Verba Local Development** in your login
 keychain and keeps the same certificate on subsequent runs. Allow macOS's keychain prompt
 for `codesign` when signing the first build. Do not delete or recreate this certificate on updates.
-For public distribution, set `APPLE_SIGNING_IDENTITY` to your Apple Developer ID identity;
-the local certificate is for your own builds.
+
+### Release builds (maintainers)
+
+The repo never contains anyone's Apple identity. To sign with a Developer ID and notarize,
+copy `.env.example` to `.env` (gitignored) and fill in `APPLE_SIGNING_IDENTITY` and the
+App Store Connect API key variables. `yarn tauri:build` then signs the app and DMG with that
+identity, notarizes and staples them. Without `.env`, builds use the local certificate above.
+Keep the `.p8` key file outside the repo; `.env` only holds its path.
+
 `npm run test:signing` verifies that two different builds retain the same identity and that
 the installer rejects an ad-hoc signature or an unrelated identity.
 

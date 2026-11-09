@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { signatureInfo, verifyStableSignature, verifySigningContinuity } from './macos-signature.mjs';
 
+const envFile = new URL('../.env', import.meta.url);
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 const config = JSON.parse(readFileSync(new URL('../app.config.json', import.meta.url), 'utf8'));
 const identity = process.env.APPLE_SIGNING_IDENTITY || config.macOSSigningIdentity;
 const directory = mkdtempSync(join(tmpdir(), 'verba-signing-test-'));

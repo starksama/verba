@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { APP_BRAND } from './app-config';
+import '@fontsource-variable/inter';
 
 type RecordingMode = 'hold' | 'toggle';
 type TranscriptionLanguage =
@@ -21,11 +22,19 @@ type PolishingOptions = {
   structure: boolean;
 };
 
+type RewritePrompt = {
+  id: string;
+  name: string;
+  hotkey: string;
+  prompt: string;
+};
+
 type Settings = {
   api_key: string;
   prompt_template: string;
   hold_hotkeys: string[];
   toggle_hotkeys: string[];
+  rewrite_prompts: RewritePrompt[];
   whisper_model: string;
   custom_vocabulary: string;
   format_model: string;
@@ -44,6 +53,7 @@ type RuntimeStatus = {
   is_processing: boolean;
   interrupted: boolean;
   failure?: { recording_id: string; message: string } | null;
+  rewriting?: string | null;
   mic_level: number;
   last_message: string;
 };
@@ -62,12 +72,24 @@ type TranscriptHistoryEntry = {
   id: number;
   created_at_ms: number;
   final_output: string;
-  recording_mode: RecordingMode;
+  recording_mode: string;
   language: TranscriptionLanguage;
   source_app?: string | null;
   source: string;
   processing_latency_ms?: number | null;
+  original_text?: string | null;
+  prompt_name?: string | null;
 };
+
+type VocabularySuggestion = {
+  id: string;
+  term: string;
+  original: string;
+  source_app?: string | null;
+  created_at_ms: number;
+};
+
+type HistoryFilter = 'all' | 'dictation' | 'rewrite';
 
 type SavedRecording = {
   id: string;
@@ -79,25 +101,29 @@ type SavedRecording = {
   raw_transcript?: string | null;
 };
 
-type DurableDraft = {
-  text: string;
-  created_at_ms: number;
-  recording_mode: RecordingMode;
-  language: TranscriptionLanguage;
-  source_app?: string | null;
-};
-
 type HistoryDayGroup = {
   key: string;
   label: string;
   entries: TranscriptHistoryEntry[];
 };
 
-type WorkspaceTab = 'home' | 'dictation' | 'history' | 'settings';
-type OnboardingStepId = 'welcome' | 'permissions' | 'api' | 'quick-setup' | 'finish';
+type WorkspaceTab = 'home' | 'history' | 'rewrite' | 'vocabulary' | 'settings';
+type OnboardingStepId = 'welcome' | 'permissions' | 'api' | 'try';
 type ShortcutSlot = 'hold' | 'toggle';
+const SHORTCUT_SLOTS: readonly ShortcutSlot[] = ['hold', 'toggle'];
+type ShortcutField = 'hold_hotkeys' | 'toggle_hotkeys';
+const SHORTCUT_FIELDS: Record<ShortcutSlot, ShortcutField> = {
+  hold: 'hold_hotkeys',
+  toggle: 'toggle_hotkeys'
+};
+const SHORTCUT_ACTION_LABELS: Record<ShortcutSlot, string> = {
+  hold: 'hold to speak',
+  toggle: 'hands-free'
+};
+type ShortcutConfig = Pick<Settings, ShortcutField | 'recording_mode' | 'language'>;
 type HotkeyCaptureTarget =
   | { scope: 'settings'; slot: ShortcutSlot; index: number | null }
+  | { scope: 'rewrite'; index: number }
   | { scope: 'onboarding' };
 type SettingsSection = 'general' | 'shortcuts' | 'ai';
 type StatusBannerTone = 'ready' | 'recording' | 'processing' | 'issue';
@@ -227,15 +253,9 @@ const appShellEl = document.querySelector<HTMLElement>('#app-shell')!;
 const sidebarToggleBtn = document.querySelector<HTMLButtonElement>('#sidebar-toggle-btn')!;
 const statusEl = document.querySelector<HTMLParagraphElement>('#status')!;
 const modeStatusTextEl = document.querySelector<HTMLParagraphElement>('#mode-status-text')!;
-const micLevelValueEl = document.querySelector<HTMLSpanElement>('#mic-level-value')!;
-const micLevelBarEl = document.querySelector<HTMLDivElement>('#mic-level-bar')!;
+const voiceBarsEl = document.querySelector<HTMLDivElement>('#voice-bars')!;
 const form = document.querySelector<HTMLFormElement>('#settings-form')!;
 const saveSettingsBtn = document.querySelector<HTMLButtonElement>('#save-settings-btn')!;
-const toggleBtn = document.querySelector<HTMLButtonElement>('#toggle-btn')!;
-const draftRestoreBannerEl = document.querySelector<HTMLDivElement>('#draft-restore-banner')!;
-const draftRestorePreviewEl = document.querySelector<HTMLParagraphElement>('#draft-restore-preview')!;
-const draftRestoreCopyBtn = document.querySelector<HTMLButtonElement>('#draft-restore-copy-btn')!;
-const draftRestoreDismissBtn = document.querySelector<HTMLButtonElement>('#draft-restore-dismiss-btn')!;
 const apiKeyControlEl = document.querySelector<HTMLElement>('#api-key-control')!;
 const apiKeyEditorEl = document.querySelector<HTMLLabelElement>('#api-key-editor')!;
 const apiKeyEditBtn = document.querySelector<HTMLButtonElement>('#api-key-edit-btn')!;
@@ -243,7 +263,6 @@ const apiKeySummaryEl = document.querySelector<HTMLSpanElement>('#api-key-summar
 const apiKeyInput = document.querySelector<HTMLInputElement>('#apiKey')!;
 const promptTemplateInput = document.querySelector<HTMLTextAreaElement>('#promptTemplate')!;
 const whisperModelInput = document.querySelector<HTMLInputElement>('#whisperModel')!;
-const customVocabularyInput = document.querySelector<HTMLTextAreaElement>('#customVocabulary')!;
 const formatModelInput = document.querySelector<HTMLInputElement>('#formatModel')!;
 const formatEnabledInput = document.querySelector<HTMLInputElement>('#formatEnabled')!;
 const polishingOptionsFieldset = document.querySelector<HTMLFieldSetElement>('#polishingOptions')!;
@@ -263,12 +282,37 @@ const holdShortcutListEl = document.querySelector<HTMLDivElement>('#hold-shortcu
 const toggleShortcutListEl = document.querySelector<HTMLDivElement>('#toggle-shortcut-list')!;
 const holdShortcutAddBtn = document.querySelector<HTMLButtonElement>('#hold-shortcut-add-btn')!;
 const toggleShortcutAddBtn = document.querySelector<HTMLButtonElement>('#toggle-shortcut-add-btn')!;
+const rewritePromptListEl = document.querySelector<HTMLDivElement>('#rewrite-prompt-list')!;
+const rewriteValidationEl = document.querySelector<HTMLParagraphElement>('#rewrite-validation')!;
+const rewritePromptAddBtn = document.querySelector<HTMLButtonElement>('#rewrite-prompt-add-btn')!;
 const shortcutDirtyIndicatorEl = document.querySelector<HTMLSpanElement>('#shortcut-dirty-indicator')!;
 const homeToggleBtn = document.querySelector<HTMLButtonElement>('#home-toggle-btn')!;
-const homeStatDaysEl = document.querySelector<HTMLSpanElement>('#home-stat-days')!;
+const homeHeroEl = document.querySelector<HTMLElement>('#home-hero')!;
+const heroTitleEl = document.querySelector<HTMLParagraphElement>('#hero-title')!;
+const homeStatRewrittenEl = document.querySelector<HTMLElement>('#home-stat-rewritten')!;
+const homeStatStreakEl = document.querySelector<HTMLElement>('#home-stat-streak')!;
+const homeStatStreakUnitEl = document.querySelector<HTMLElement>('#home-stat-streak-unit')!;
+const ACTIVITY_DAYS = 14;
+const homeActivityChartEl = document.querySelector<HTMLDivElement>('#home-activity-chart')!;
+const homeActivitySummaryEl = document.querySelector<HTMLSpanElement>('#home-activity-summary')!;
+const homeRewriteListEl = document.querySelector<HTMLDivElement>('#home-rewrite-list')!;
+const homeVocabularySummaryEl = document.querySelector<HTMLParagraphElement>('#home-vocabulary-summary')!;
+const rewriteEmptyEl = document.querySelector<HTMLParagraphElement>('#rewrite-empty')!;
+const rewriteSaveStateEl = document.querySelector<HTMLSpanElement>('#rewrite-save-state')!;
+const vocabularyAddForm = document.querySelector<HTMLFormElement>('#vocabulary-add-form')!;
+const vocabularyAddInput = document.querySelector<HTMLInputElement>('#vocabulary-add-input')!;
+const vocabularySuggestionsEl = document.querySelector<HTMLElement>('#vocabulary-suggestions')!;
+const vocabularySuggestionListEl = document.querySelector<HTMLDivElement>('#vocabulary-suggestion-list')!;
+const vocabularyListEl = document.querySelector<HTMLDivElement>('#vocabulary-list')!;
+const vocabularyEmptyEl = document.querySelector<HTMLParagraphElement>('#vocabulary-empty')!;
+const vocabularyCountEl = document.querySelector<HTMLSpanElement>('#vocabulary-count')!;
+const vocabularyBadgeEl = document.querySelector<HTMLSpanElement>('#vocabulary-badge')!;
+const historyFilterButtons = document.querySelectorAll<HTMLButtonElement>('[data-history-filter]');
+const headerActionGroups = document.querySelectorAll<HTMLElement>('[data-header-for]');
 const homeStatWordsEl = document.querySelector<HTMLSpanElement>('#home-stat-words')!;
 const homeStatSavedEl = document.querySelector<HTMLSpanElement>('#home-stat-saved')!;
 const homeRecentEmptyEl = document.querySelector<HTMLParagraphElement>('#home-recent-empty')!;
+const HISTORY_EMPTY_TEXT = 'Nothing yet. Dictate or rewrite once and it shows up here.';
 const homeRecentFeedEl = document.querySelector<HTMLDivElement>('#home-recent-feed')!;
 const shortcutHoldHintEl = document.querySelector<HTMLSpanElement>('#shortcut-hold-hint')!;
 const shortcutToggleHintEl = document.querySelector<HTMLSpanElement>('#shortcut-toggle-hint')!;
@@ -285,6 +329,7 @@ const settingsSectionButtons = document.querySelectorAll<HTMLButtonElement>('[da
 const settingsSectionPanels = document.querySelectorAll<HTMLElement>('[data-settings-panel]');
 const historyFeedEl = document.querySelector<HTMLDivElement>('#history-feed')!;
 const historyEmptyEl = document.querySelector<HTMLParagraphElement>('#history-empty')!;
+const historyMoreBtn = document.querySelector<HTMLButtonElement>('#history-more-btn')!;
 const historyCountEl = document.querySelector<HTMLElement>('#history-count')!;
 const historySearchInput = document.querySelector<HTMLInputElement>('#history-search')!;
 const reopenOnboardingBtn = document.querySelector<HTMLButtonElement>('#reopen-onboarding-btn')!;
@@ -304,21 +349,16 @@ const onboardingApiBaseUrlValidationEl = document.querySelector<HTMLParagraphEle
   '#onboarding-api-base-url-validation'
 )!;
 const onboardingApiBaseUrlFixBtn = document.querySelector<HTMLButtonElement>('#onboarding-api-base-url-fix-btn')!;
-const onboardingRecordingModeInput = document.querySelector<HTMLSelectElement>('#onboarding-recording-mode')!;
 const onboardingHotkeyInput = document.querySelector<HTMLInputElement>('#onboarding-hotkey')!;
 const onboardingHotkeyCaptureBtn = document.querySelector<HTMLButtonElement>('#onboarding-hotkey-capture-btn')!;
 const onboardingHotkeyValidationEl = document.querySelector<HTMLParagraphElement>('#onboarding-hotkey-validation')!;
-const onboardingLanguageInput = document.querySelector<HTMLSelectElement>('#onboarding-language')!;
+const onboardingMarkEl = document.querySelector<HTMLImageElement>('#onboarding-mark')!;
+const onboardingProgressDots = document.querySelectorAll<HTMLSpanElement>('.onboarding-progress span');
+const onboardingTryInput = document.querySelector<HTMLTextAreaElement>('#onboarding-try-input')!;
+const onboardingTryResultEl = document.querySelector<HTMLParagraphElement>('#onboarding-try-result')!;
 const onboardingOpenAccessibilitySettingsBtn = document.querySelector<HTMLButtonElement>(
   '#onboarding-open-accessibility-settings-btn'
 )!;
-const onboardingCheckAccessibilityBtn = document.querySelector<HTMLButtonElement>(
-  '#onboarding-check-accessibility-btn'
-)!;
-const onboardingResetAccessibilityPermissionBtn = document.querySelector<HTMLButtonElement>(
-  '#onboarding-reset-accessibility-permission-btn'
-)!;
-const onboardingCheckMicrophoneBtn = document.querySelector<HTMLButtonElement>('#onboarding-check-microphone-btn')!;
 const onboardingOpenMicrophoneSettingsBtn = document.querySelector<HTMLButtonElement>(
   '#onboarding-open-microphone-settings-btn'
 )!;
@@ -352,7 +392,7 @@ function defaultHotkeyForSlot(slot: ShortcutSlot): string {
   return 'Cmd+Space';
 }
 
-let activeConfig: Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys' | 'recording_mode' | 'language'> = {
+let activeConfig: ShortcutConfig = {
   hold_hotkeys: ['Cmd+Space'],
   toggle_hotkeys: ['Option+Space'],
   recording_mode: 'hold',
@@ -362,6 +402,13 @@ let savedShortcutConfig: Record<ShortcutSlot, string[]> = {
   hold: ['Cmd+Space'],
   toggle: ['Option+Space']
 };
+let rewritePrompts: RewritePrompt[] = [];
+let savedRewritePrompts: RewritePrompt[] = [];
+let vocabularyTerms: string[] = [];
+let vocabularySuggestions: VocabularySuggestion[] = [];
+let historyFilter: HistoryFilter = 'all';
+const HISTORY_PAGE_SIZE = 5;
+let historyLimit = HISTORY_PAGE_SIZE;
 let activeTab: WorkspaceTab = 'home';
 let activeSettingsSection: SettingsSection = 'general';
 let isSidebarCollapsed = false;
@@ -376,17 +423,22 @@ const THEME_SYNC_EVENT = 'theme-preference-changed';
 const SETTINGS_SECTION_ORDER: SettingsSection[] = ['general', 'shortcuts', 'ai'];
 const WORKSPACE_TITLES: Record<WorkspaceTab, string> = {
   home: 'Home',
-  dictation: 'Dictation',
   history: 'History',
+  rewrite: 'Rewrite',
+  vocabulary: 'Vocabulary',
   settings: 'Settings'
 };
-const onboardingStepOrder: OnboardingStepId[] = ['welcome', 'permissions', 'api', 'quick-setup', 'finish'];
+const onboardingStepOrder: OnboardingStepId[] = ['welcome', 'permissions', 'api', 'try'];
+// History entries newer than this came from the Try step.
+const ONBOARDING_PERMISSION_POLL_MS = 1000;
+let onboardingPermissionPollId: number | null = null;
+let onboardingTryStartedAt = 0;
+const ONBOARDING_TRY_FILL_DELAY_MS = 1500;
 let onboardingStepIndex = 0;
 let historyEntries: TranscriptHistoryEntry[] = [];
 let historySelectedEntryId: number | null = null;
 let historyCopiedEntryId: number | null = null;
 let shouldScrollHistorySelection = false;
-let durableDraft: DurableDraft | null = null;
 const TOGGLE_PENDING_TIMEOUT_MS = 3000;
 const HISTORY_COPY_FEEDBACK_TIMEOUT_MS = 1600;
 const APP_TOAST_TIMEOUT_MS = 1600;
@@ -399,7 +451,7 @@ let togglePendingAction: 'starting' | 'stopping' | null = null;
 let togglePendingTimeoutId: number | null = null;
 let historyCopyFeedbackTimeoutId: number | null = null;
 let appToastTimeoutId: number | null = null;
-let lastRenderedRuntimeState: Pick<RuntimeStatus, 'is_recording' | 'is_processing' | 'last_message' | 'failure'> | null = null;
+let lastRenderedRuntimeState: Pick<RuntimeStatus, 'is_recording' | 'is_processing' | 'last_message' | 'failure' | 'rewriting'> | null = null;
 let appStatusMessage = 'Ready';
 let statusMessageSource: 'runtime' | 'ui' = 'runtime';
 let quietInputStartedAt: number | null = null;
@@ -413,7 +465,7 @@ function isThemePreference(value: string | null): value is ThemePreference {
 
 function readThemePreference(): ThemePreference {
   const stored = localStorage.getItem(THEME_MODE_KEY);
-  return isThemePreference(stored) ? stored : 'light';
+  return isThemePreference(stored) ? stored : 'system';
 }
 
 function resolveTheme(preference: ThemePreference): ResolvedTheme {
@@ -469,7 +521,7 @@ function microphoneGuidance(status: MicrophonePermissionStatus | null): string {
   const appName = APP_BRAND.displayName;
   if (!status) return '';
   if (!status.is_supported) return 'macOS only.';
-  if (status.status === 'dev_terminal' || status.is_granted) return '';
+  if (status.is_granted) return '';
   if (status.status === 'not_determined') {
     return 'Click Request access.';
   }
@@ -499,8 +551,8 @@ function applyBranding(): void {
   sidebarBrandIconEl.src = APP_BRAND.iconUrl;
   sidebarBrandNameEl.textContent = APP_BRAND.displayName;
   onboardingTitleEl.textContent = `Welcome to ${APP_BRAND.displayName}`;
-  onboardingPermissionsCopyEl.textContent =
-    'Click Request access for Microphone. Apps cannot be added manually in System Settings.';
+  onboardingMarkEl.src = APP_BRAND.markUrl;
+  onboardingPermissionsCopyEl.textContent = 'macOS asks once for each.';
 }
 
 function renderWorkspaceHeader(tab: WorkspaceTab): void {
@@ -563,8 +615,6 @@ function shouldShowIdleStatusMessage(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (!normalized) return false;
   return (
-    normalized.includes('text captured') ||
-    normalized.includes('saved text') ||
     normalized.includes('no speech') ||
     normalized.includes('could not') ||
     normalized.includes('failed') ||
@@ -593,9 +643,6 @@ function compactRuntimeFeedbackMessage(message: string): string {
   if (!cleaned) return 'Ready';
   if (cleaned.toLowerCase().includes('no speech detected')) {
     return 'No speech detected';
-  }
-  if (cleaned.toLowerCase().includes('text captured')) {
-    return 'Text captured. Saved text available.';
   }
   const firstSentence = cleaned.match(/^[^.]+[.]?/)?.[0]?.trim();
   return firstSentence || cleaned;
@@ -669,6 +716,9 @@ function setRuntimeStatusMessage(message: string): void {
 function setActiveTab(targetTab: WorkspaceTab, focusTab = false): void {
   activeTab = targetTab;
   renderWorkspaceHeader(targetTab);
+  headerActionGroups.forEach((group) => {
+    group.hidden = group.dataset.headerFor !== targetTab;
+  });
   tabButtons.forEach((button) => {
     const isActive = button.dataset.tabTarget === targetTab;
     button.classList.toggle('is-active', isActive);
@@ -684,6 +734,9 @@ function setActiveTab(targetTab: WorkspaceTab, focusTab = false): void {
     panel.classList.toggle('is-active', isActive);
     panel.hidden = !isActive;
   });
+  if (targetTab === 'rewrite') {
+    rewritePromptListEl.querySelectorAll<HTMLTextAreaElement>('.prompt-text').forEach(fitPromptText);
+  }
 }
 
 function setActiveSettingsSection(targetSection: SettingsSection, focusButton = false): void {
@@ -866,9 +919,7 @@ function setApiKeyEditorOpen(isOpen: boolean, focusInput = false): void {
 function syncOnboardingInputsFromSettings(): void {
   onboardingApiKeyInput.value = apiKeyInput.value.trim();
   onboardingApiBaseUrlInput.value = apiBaseUrlInput.value.trim() || 'https://api.openai.com/v1';
-  onboardingRecordingModeInput.value = normalizeMode(recordingModeInput.value);
   onboardingHotkeyInput.value = activeConfig.hold_hotkeys[0] || defaultHotkeyForSlot('hold');
-  onboardingLanguageInput.value = normalizeLanguage(languageInput.value);
   validateOnboardingApiStep();
   validateOnboardingHotkeyInput();
 }
@@ -882,10 +933,21 @@ function updateOnboardingStep(): void {
     el.classList.toggle('hidden', !isActive);
   });
 
-  onboardingBackBtn.disabled = onboardingStepIndex === 0;
+  onboardingProgressDots.forEach((dot, index) => {
+    dot.classList.toggle('is-done', index < onboardingStepIndex);
+    dot.classList.toggle('is-current', index === onboardingStepIndex);
+  });
+  onboardingBackBtn.hidden = onboardingStepIndex === 0;
   const isLast = onboardingStepIndex === onboardingStepOrder.length - 1;
+  onboardingNextBtn.textContent = onboardingStepIndex === 0 ? 'Get started' : 'Continue';
   onboardingNextBtn.classList.toggle('hidden', isLast);
   onboardingFinishBtn.classList.toggle('hidden', !isLast);
+  if (step === 'try') {
+    onboardingTryStartedAt = Date.now();
+    onboardingTryInput.value = '';
+    onboardingTryResultEl.hidden = true;
+  }
+  syncOnboardingPermissionPolling();
   requestAnimationFrame(focusOnboardingStep);
 }
 
@@ -899,14 +961,13 @@ function focusOnboardingStep(): void {
     } else if (!onboardingOpenAccessibilitySettingsBtn.disabled) {
       target = onboardingOpenAccessibilitySettingsBtn;
     } else {
-      target = onboardingCheckMicrophoneBtn;
+      target = onboardingNextBtn;
     }
   } else if (step === 'api') {
     target = onboardingApiKeyInput.value.trim() ? onboardingApiBaseUrlInput : onboardingApiKeyInput;
-  } else if (step === 'quick-setup') {
-    target = onboardingHotkeyCaptureBtn;
-  } else if (step === 'finish') {
-    target = onboardingFinishBtn;
+  } else if (step === 'try') {
+    // Dictation lands in the focused field, so the practice area must hold focus.
+    target = onboardingTryInput;
   } else {
     target = onboardingNextBtn;
   }
@@ -928,6 +989,7 @@ function showOnboarding(options: { resetStep?: boolean; step?: OnboardingStepId 
   renderOnboardingPermissionStatuses();
   updateOnboardingStep();
   onboardingModalEl.classList.remove('hidden');
+  syncOnboardingPermissionPolling();
   if (onboardingStepOrder[onboardingStepIndex] === 'permissions') {
     void refreshPermissionStatuses();
   }
@@ -938,14 +1000,11 @@ function hideOnboarding(): void {
     stopHotkeyCapture();
   }
   onboardingModalEl.classList.add('hidden');
+  syncOnboardingPermissionPolling();
   if (preOnboardingFocusEl?.isConnected) {
     preOnboardingFocusEl.focus();
   }
   preOnboardingFocusEl = null;
-}
-
-function recordingModeLabel(mode: RecordingMode): string {
-  return mode === 'toggle' ? 'Toggle start/stop' : 'Hold to record';
 }
 
 function languageLabel(language: TranscriptionLanguage): string {
@@ -1441,7 +1500,7 @@ function renderShortcutEditor(slot: ShortcutSlot): void {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'ui-button ui-button-quiet shortcut-remove-btn icon-only';
-    const actionLabel = slot === 'hold' ? 'hold to speak' : 'hands-free';
+    const actionLabel = SHORTCUT_ACTION_LABELS[slot];
     removeBtn.setAttribute('aria-label', `Remove ${actionLabel} shortcut ${index + 1}`);
     removeBtn.title = 'Remove shortcut';
     removeBtn.innerHTML =
@@ -1493,7 +1552,7 @@ function renderShortcutSummary(target: HTMLElement, shortcuts: string[]): void {
 }
 
 function applyConfigUi(
-  config: Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys' | 'recording_mode' | 'language'>
+  config: ShortcutConfig
 ): void {
   activeConfig = {
     hold_hotkeys: normalizeShortcutList(config.hold_hotkeys, 'hold'),
@@ -1502,18 +1561,17 @@ function applyConfigUi(
     language: normalizeLanguage(config.language)
   };
 
-  const modeLabel = recordingModeLabel(activeConfig.recording_mode);
-  const languageText = languageLabel(activeConfig.language);
+  // Shortcuts already say how to record; only a pinned language is worth repeating.
+  const languageText = activeConfig.language === 'auto' ? '' : languageLabel(activeConfig.language);
 
   renderShortcutSummary(shortcutHoldHintEl, activeConfig.hold_hotkeys);
   renderShortcutSummary(shortcutToggleHintEl, activeConfig.toggle_hotkeys);
-  renderShortcutEditor('hold');
-  renderShortcutEditor('toggle');
+  SHORTCUT_SLOTS.forEach(renderShortcutEditor);
   renderOnboardingHotkeyTrigger(
     onboardingHotkeyInput.value || activeConfig.hold_hotkeys[0],
     activeHotkeyCaptureTarget?.scope === 'onboarding'
   );
-  modeStatusTextEl.textContent = `${modeLabel}. ${languageText}.`;
+  modeStatusTextEl.textContent = languageText;
   renderShortcutDirtyState();
 }
 
@@ -1521,21 +1579,30 @@ function setRecordingActionLabels(
   isRecording: boolean,
   pendingAction: 'starting' | 'stopping' | null = null
 ): void {
-  if (pendingAction === 'starting') {
-    toggleBtn.textContent = 'Starting';
-    homeToggleBtn.textContent = 'Starting';
-    return;
-  }
+  const label =
+    pendingAction === 'starting'
+      ? 'Starting recording'
+      : pendingAction === 'stopping'
+        ? 'Stopping recording'
+        : isRecording
+          ? 'Stop recording'
+          : 'Start recording';
+  homeToggleBtn.setAttribute('aria-label', label);
+  homeToggleBtn.title = label;
+  homeToggleBtn.classList.toggle('is-recording', isRecording && pendingAction !== 'stopping');
+}
 
-  if (pendingAction === 'stopping') {
-    toggleBtn.textContent = 'Stopping';
-    homeToggleBtn.textContent = 'Stopping';
-    return;
-  }
-
-  const label = isRecording ? 'Stop recording' : 'Start recording';
-  toggleBtn.textContent = label;
-  homeToggleBtn.textContent = label;
+function renderHero(status: RuntimeStatus): void {
+  const state = status.is_recording ? 'recording' : status.is_processing ? 'processing' : 'idle';
+  homeHeroEl.dataset.state = state;
+  heroTitleEl.textContent =
+    state === 'recording'
+      ? 'Listening\u2026'
+      : state === 'processing'
+        ? status.rewriting
+          ? `Rewriting \u00b7 ${status.rewriting}`
+          : 'Transcribing\u2026'
+        : 'Ready';
 }
 
 function runtimeStateChanged(status: RuntimeStatus): boolean {
@@ -1544,14 +1611,14 @@ function runtimeStateChanged(status: RuntimeStatus): boolean {
     lastRenderedRuntimeState.is_recording !== status.is_recording ||
     lastRenderedRuntimeState.is_processing !== status.is_processing ||
     lastRenderedRuntimeState.failure?.recording_id !== status.failure?.recording_id ||
-    lastRenderedRuntimeState.last_message !== status.last_message
+    lastRenderedRuntimeState.last_message !== status.last_message ||
+    lastRenderedRuntimeState.rewriting !== status.rewriting
   );
 }
 
 function renderMicLevel(status: RuntimeStatus): void {
   const level = Math.max(0, Math.min(100, Math.round(status.mic_level || 0)));
-  micLevelValueEl.textContent = status.is_recording ? `${level}%` : '0%';
-  micLevelBarEl.style.width = `${status.is_recording ? level : 0}%`;
+  voiceBarsEl.style.setProperty('--level', String(status.is_recording ? level / 100 : 0));
 
   const previousLiveIssue = liveInputIssueActive;
   if (!status.is_recording || level > LIVE_INPUT_THRESHOLD) {
@@ -1579,9 +1646,11 @@ function renderStatus(status: RuntimeStatus): void {
     is_recording: status.is_recording,
     is_processing: status.is_processing,
     failure: status.failure,
-    last_message: status.last_message
+    last_message: status.last_message,
+    rewriting: status.rewriting
   };
 
+  renderHero(status);
   document.body.classList.toggle('is-recording', status.is_recording);
   document.body.classList.toggle('is-processing', status.is_processing);
   clearTogglePendingState(status.is_recording);
@@ -1608,7 +1677,6 @@ function renderStatus(status: RuntimeStatus): void {
 }
 
 function setToggleButtonsDisabled(disabled: boolean): void {
-  toggleBtn.disabled = disabled;
   homeToggleBtn.disabled = disabled;
 }
 
@@ -1665,22 +1733,19 @@ function renderMicrophoneStatus(status: MicrophonePermissionStatus): void {
 function onboardingAccessibilityLabel(status: AccessibilityPermissionStatus | null): string {
   if (!status) return 'Checking';
   if (!status.is_supported) return 'macOS only';
-  if (status.is_granted) return 'Enabled';
-  return status.guidance;
+  if (status.is_granted) return 'Allowed';
+  if (status.status === 'restart_required' || status.status === 'check_failed') return status.guidance;
+  return `So ${APP_BRAND.displayName} can type for you`;
 }
 
 function onboardingMicrophoneLabel(status: MicrophonePermissionStatus | null): string {
-  const appName = APP_BRAND.displayName;
   if (!status) return 'Checking';
-  if (!status.is_supported) return 'Microphone setup is only available on macOS.';
-  if (status.is_granted) return 'Enabled';
+  if (!status.is_supported) return 'macOS only';
+  if (status.is_granted) return 'Allowed';
   if (status.status === 'check_failed') return status.guidance;
-  if (status.status === 'not_determined') {
-    return 'Click Request access. macOS will show the permission prompt.';
-  }
-  if (status.status === 'denied') return `Open Microphone and turn ${appName} on.`;
-  if (status.status === 'restricted') return 'Microphone is blocked by macOS policy.';
-  return 'Click Request access, then follow the macOS prompt.';
+  if (status.status === 'denied') return `Turned off. Open Settings and turn ${APP_BRAND.displayName} on.`;
+  if (status.status === 'restricted') return 'Blocked by macOS policy';
+  return `So ${APP_BRAND.displayName} can hear you`;
 }
 
 function renderOnboardingPermissionStatuses(): void {
@@ -1688,15 +1753,12 @@ function renderOnboardingPermissionStatuses(): void {
   setPermissionUiState(onboardingMicrophoneRowEl, lastMicrophoneStatus);
   onboardingAccessibilityStatusEl.textContent = onboardingAccessibilityLabel(lastAccessibilityStatus);
   onboardingMicrophoneStatusEl.textContent = onboardingMicrophoneLabel(lastMicrophoneStatus);
-  onboardingResetAccessibilityPermissionBtn.hidden =
-    !lastAccessibilityStatus || !lastAccessibilityStatus.is_supported || lastAccessibilityStatus.is_granted;
+  const accessibilityNeedsRestart = lastAccessibilityStatus?.status === 'restart_required';
+  onboardingOpenAccessibilitySettingsBtn.textContent = accessibilityNeedsRestart ? 'Restart' : 'Open Settings';
   onboardingOpenAccessibilitySettingsBtn.disabled =
     Boolean(lastAccessibilityStatus && (!lastAccessibilityStatus.is_supported || lastAccessibilityStatus.is_granted));
-  const microphoneActionLabel =
-    lastMicrophoneStatus?.status === 'denied' || lastMicrophoneStatus?.status === 'restricted'
-      ? 'Open Microphone'
-      : 'Request access';
-  onboardingOpenMicrophoneSettingsBtn.textContent = lastMicrophoneStatus?.is_granted ? 'Allowed' : microphoneActionLabel;
+  onboardingOpenMicrophoneSettingsBtn.textContent =
+    lastMicrophoneStatus?.status === 'denied' || lastMicrophoneStatus?.status === 'restricted' ? 'Open Settings' : 'Allow';
   onboardingOpenMicrophoneSettingsBtn.disabled =
     Boolean(lastMicrophoneStatus && (!lastMicrophoneStatus.is_supported || lastMicrophoneStatus.is_granted));
 }
@@ -1770,10 +1832,6 @@ async function openAccessibilitySettingsFromUi(button: HTMLButtonElement): Promi
   button.disabled = true;
   try {
     const permissionStatus = await checkAndRenderAccessibilityStatus(true);
-    if (permissionStatus.status === 'dev_terminal') {
-      setStatusMessage(permissionStatus.guidance);
-      return;
-    }
     if (permissionStatus.is_granted) {
       setStatusMessage('Accessibility enabled.');
       return;
@@ -1789,19 +1847,6 @@ async function openAccessibilitySettingsFromUi(button: HTMLButtonElement): Promi
       lastAccessibilityStatus && (!lastAccessibilityStatus.is_supported || lastAccessibilityStatus.is_granted)
     );
     renderOnboardingPermissionStatuses();
-  }
-}
-
-async function resetAccessibilityPermissionFromUi(button: HTMLButtonElement): Promise<void> {
-  button.disabled = true;
-  try {
-    const resetMessage = await invokeCommand<string>('reset_accessibility_permission');
-    setStatusMessage(resetMessage);
-    await openAccessibilitySettingsFromUi(button);
-  } catch (error) {
-    setStatusMessage(`Reset did not finish: ${userErrorMessage(error)}`);
-  } finally {
-    button.disabled = false;
   }
 }
 
@@ -1854,7 +1899,7 @@ async function ensureOnboardingPermissionsReady(): Promise<boolean> {
 
   setStatusMessage(
     missing[0] === 'Accessibility'
-      ? `Open Accessibility, turn ${APP_BRAND.displayName} on, then click Check again.`
+      ? `Turn ${APP_BRAND.displayName} on in Accessibility.`
       : microphoneGuidance(microphone)
   );
   syncPermissionSetupBanner();
@@ -1874,24 +1919,362 @@ function normalizeShortcutList(shortcuts: string[], slot: ShortcutSlot): string[
 }
 
 function shortcutValuesForSlot(
-  config: Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys'>,
+  config: Pick<Settings, ShortcutField>,
   slot: ShortcutSlot
 ): string[] {
-  if (slot === 'hold') return config.hold_hotkeys;
-  return config.toggle_hotkeys;
+  return config[SHORTCUT_FIELDS[slot]];
 }
 
 function withShortcutValues(
-  config: Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys' | 'recording_mode' | 'language'>,
+  config: ShortcutConfig,
   slot: ShortcutSlot,
   shortcuts: string[]
-): Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys' | 'recording_mode' | 'language'> {
-  const normalized = normalizeShortcutList(shortcuts, slot);
-  if (slot === 'hold') {
-    return { ...config, hold_hotkeys: normalized };
-  }
-  return { ...config, toggle_hotkeys: normalized };
+): ShortcutConfig {
+  return { ...config, [SHORTCUT_FIELDS[slot]]: normalizeShortcutList(shortcuts, slot) };
 }
+
+const ICON_PATHS = {
+  mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V20.5"/>',
+  pencil: '<path d="M15.5 4.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/><path d="m13.5 6.5 3 3"/>',
+  copy: '<rect x="9" y="9" width="10" height="10" rx="2"/><path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/>',
+  check: '<path d="M5 12.5 9.5 17 19 7.5"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/>',
+  x: '<path d="M7 7l10 10M17 7 7 17"/>',
+  folder: '<path d="M4 7.5a2 2 0 0 1 2-2h3.5l2 2H18a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>',
+  retry: '<path d="M19 12a7 7 0 1 1-2.05-4.95M19 5v4h-4"/>'
+} as const;
+
+function iconSvg(name: keyof typeof ICON_PATHS): string {
+  return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
+}
+
+function clonePrompts(prompts: RewritePrompt[]): RewritePrompt[] {
+  return prompts.map((prompt) => ({ ...prompt }));
+}
+
+function isCompletePrompt(prompt: RewritePrompt): boolean {
+  return prompt.name.trim().length > 0 && prompt.prompt.trim().length > 0;
+}
+
+/// Prompts that are ready to save; half-filled new cards stay local drafts.
+function completeRewritePrompts(): RewritePrompt[] {
+  return rewritePrompts
+    .filter(isCompletePrompt)
+    .map((prompt) => ({ ...prompt, name: prompt.name.trim(), prompt: prompt.prompt.trim() }));
+}
+
+function setRewritePrompts(prompts: RewritePrompt[]): void {
+  rewritePrompts = clonePrompts(prompts);
+  savedRewritePrompts = clonePrompts(prompts);
+  setRewriteValidation('');
+  renderRewritePrompts();
+}
+
+function rewritePromptsDirty(): boolean {
+  return JSON.stringify(completeRewritePrompts()) !== JSON.stringify(savedRewritePrompts);
+}
+
+function setRewriteValidation(message: string): void {
+  rewriteValidationEl.textContent = message;
+  rewriteValidationEl.classList.toggle('hidden', message.trim().length === 0);
+}
+
+function setRewriteSaveState(message: string): void {
+  rewriteSaveStateEl.textContent = message;
+}
+
+function validateRewritePrompts(): string | null {
+  for (const prompt of completeRewritePrompts()) {
+    const hotkeyError = validateHotkey(prompt.hotkey);
+    if (hotkeyError) return `“${prompt.name}”: ${hotkeyError}`;
+  }
+  const shortcuts = [
+    ...SHORTCUT_SLOTS.flatMap((slot) => shortcutValuesForSlot(activeConfig, slot)),
+    ...completeRewritePrompts().map((prompt) => prompt.hotkey)
+  ].map(normalizeHotkeyInput);
+  if (new Set(shortcuts).size !== shortcuts.length) return 'Each shortcut must be unique across actions.';
+  return null;
+}
+
+let rewriteSaveTimer: number | null = null;
+let rewriteSaveSequence = 0;
+
+function scheduleRewriteSave(delayMs = 700): void {
+  if (rewriteSaveTimer !== null) window.clearTimeout(rewriteSaveTimer);
+  rewriteSaveTimer = window.setTimeout(() => {
+    rewriteSaveTimer = null;
+    void saveRewritePromptsNow();
+  }, delayMs);
+}
+
+async function saveRewritePromptsNow(): Promise<void> {
+  const error = validateRewritePrompts();
+  if (error) {
+    setRewriteValidation(error);
+    setRewriteSaveState('');
+    return;
+  }
+  setRewriteValidation('');
+  if (!rewritePromptsDirty()) return;
+  const sequence = ++rewriteSaveSequence;
+  setRewriteSaveState('Saving…');
+  try {
+    const saved = await invokeCommand<RewritePrompt[]>('save_rewrite_prompts', { prompts: completeRewritePrompts() });
+    if (sequence !== rewriteSaveSequence) return;
+    savedRewritePrompts = clonePrompts(saved);
+    setRewriteSaveState('Saved');
+    renderHomeSide();
+  } catch (saveError) {
+    if (sequence !== rewriteSaveSequence) return;
+    setRewriteValidation(userErrorMessage(saveError));
+    setRewriteSaveState('');
+  }
+}
+
+function unusedRewriteHotkey(): string {
+  const taken = new Set(
+    [
+      ...SHORTCUT_SLOTS.flatMap((slot) => shortcutValuesForSlot(activeConfig, slot)),
+      ...rewritePrompts.map((prompt) => prompt.hotkey)
+    ].map(normalizeHotkeyInput)
+  );
+  for (const key of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'R']) {
+    const candidate = normalizeHotkeyInput(`Ctrl+Option+${key}`);
+    if (!taken.has(candidate)) return candidate;
+  }
+  return '';
+}
+
+function promptUsageCount(name: string): number {
+  return historyEntries.filter((entry) => isRewriteEntry(entry) && entry.prompt_name === name).length;
+}
+
+function promptUsageLabel(prompt: RewritePrompt): string {
+  if (!isCompletePrompt(prompt)) return 'Draft · add a name and prompt';
+  const count = promptUsageCount(prompt.name.trim());
+  return count === 0 ? 'Not used yet' : `Used ${NUMBER_FORMATTER.format(count)} time${count === 1 ? '' : 's'}`;
+}
+
+function updatePromptUsageLabels(): void {
+  rewritePromptListEl.querySelectorAll<HTMLElement>('[data-prompt-usage]').forEach((el) => {
+    const prompt = rewritePrompts.find((each) => each.id === el.dataset.promptUsage);
+    if (prompt) el.textContent = promptUsageLabel(prompt);
+  });
+}
+
+function renderRewritePrompts(): void {
+  const capturing = activeHotkeyCaptureTarget;
+  rewriteEmptyEl.hidden = rewritePrompts.length > 0;
+  rewritePromptListEl.replaceChildren(
+    ...rewritePrompts.map((prompt, index) => {
+      const cardEl = document.createElement('article');
+      cardEl.className = 'prompt-card';
+      cardEl.classList.toggle('is-draft', !isCompletePrompt(prompt));
+
+      const headEl = document.createElement('div');
+      headEl.className = 'prompt-card-head';
+
+      const iconEl = document.createElement('span');
+      iconEl.className = 'prompt-icon';
+      iconEl.innerHTML = iconSvg('pencil');
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.className = 'prompt-name';
+      nameInput.placeholder = 'Prompt name';
+      nameInput.setAttribute('aria-label', 'Prompt name');
+      nameInput.value = prompt.name;
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'icon-button';
+      removeBtn.setAttribute('aria-label', `Delete ${prompt.name || 'prompt'}`);
+      removeBtn.title = 'Delete prompt';
+      removeBtn.innerHTML = iconSvg('trash');
+      removeBtn.addEventListener('click', () => {
+        if (activeHotkeyCaptureTarget) stopHotkeyCapture();
+        rewritePrompts.splice(index, 1);
+        renderRewritePrompts();
+        scheduleRewriteSave(0);
+      });
+
+      const promptInput = document.createElement('textarea');
+      promptInput.className = 'prompt-text';
+      promptInput.rows = 4;
+      promptInput.placeholder = 'How should the selected text be rewritten?';
+      promptInput.setAttribute('aria-label', `${prompt.name || 'Prompt'} instructions`);
+      promptInput.value = prompt.prompt;
+
+      const footEl = document.createElement('div');
+      footEl.className = 'prompt-card-foot';
+
+      const triggerBtn = document.createElement('button');
+      triggerBtn.type = 'button';
+      triggerBtn.className = 'shortcut-trigger';
+      triggerBtn.setAttribute('aria-label', `Shortcut for ${prompt.name || 'prompt'}`);
+      triggerBtn.addEventListener('click', () => {
+        startHotkeyCapture({ scope: 'rewrite', index });
+      });
+      renderHotkeyTrigger(triggerBtn, prompt.hotkey, capturing?.scope === 'rewrite' && capturing.index === index);
+
+      const usageEl = document.createElement('span');
+      usageEl.className = 'prompt-usage';
+      usageEl.dataset.promptUsage = prompt.id;
+      usageEl.textContent = promptUsageLabel(prompt);
+
+      const onEdit = () => {
+        cardEl.classList.toggle('is-draft', !isCompletePrompt(prompt));
+        usageEl.textContent = promptUsageLabel(prompt);
+        removeBtn.setAttribute('aria-label', `Delete ${prompt.name || 'prompt'}`);
+        scheduleRewriteSave();
+      };
+      nameInput.addEventListener('input', () => {
+        prompt.name = nameInput.value;
+        onEdit();
+      });
+      promptInput.addEventListener('input', () => {
+        prompt.prompt = promptInput.value;
+        fitPromptText(promptInput);
+        onEdit();
+      });
+
+      headEl.append(iconEl, nameInput, removeBtn);
+      footEl.append(triggerBtn, usageEl);
+      cardEl.append(headEl, promptInput, footEl);
+      return cardEl;
+    })
+  );
+  rewritePromptAddBtn.disabled = Boolean(capturing);
+  rewritePromptListEl.querySelectorAll<HTMLTextAreaElement>('.prompt-text').forEach(fitPromptText);
+}
+
+const PROMPT_TEXT_MAX_HEIGHT = 360;
+
+// Grow the prompt box to its text so short and long prompts read without an inner scrollbar.
+function fitPromptText(el: HTMLTextAreaElement): void {
+  if (!el.isConnected || el.offsetParent === null) return; // hidden tab: refit when Rewrite opens
+  el.style.height = 'auto';
+  const height = Math.min(el.scrollHeight + 2, PROMPT_TEXT_MAX_HEIGHT);
+  el.style.height = `${height}px`;
+  el.style.overflowY = el.scrollHeight + 2 > PROMPT_TEXT_MAX_HEIGHT ? 'auto' : 'hidden';
+}
+
+rewritePromptAddBtn.addEventListener('click', () => {
+  rewritePrompts.push({ id: crypto.randomUUID(), name: '', hotkey: unusedRewriteHotkey(), prompt: '' });
+  setRewriteValidation('');
+  renderRewritePrompts();
+  rewritePromptListEl.querySelector<HTMLInputElement>('.prompt-card:last-child .prompt-name')?.focus();
+});
+
+// ---------- vocabulary ----------
+
+function parseVocabulary(raw: string): string[] {
+  const terms: string[] = [];
+  for (const term of raw.split(/[\n,，、]/).map((each) => each.trim())) {
+    if (term && !terms.includes(term)) terms.push(term);
+  }
+  return terms;
+}
+
+function setVocabulary(terms: string[]): void {
+  vocabularyTerms = [...terms];
+  renderVocabulary();
+  renderHomeSide();
+}
+
+async function saveVocabulary(terms: string[]): Promise<boolean> {
+  try {
+    setVocabulary(await invokeCommand<string[]>('save_vocabulary', { terms }));
+    return true;
+  } catch (error) {
+    showAppToast(userErrorMessage(error), 'error');
+    return false;
+  }
+}
+
+function renderVocabulary(): void {
+  vocabularyCountEl.textContent = NUMBER_FORMATTER.format(vocabularyTerms.length);
+  vocabularyEmptyEl.hidden = vocabularyTerms.length > 0;
+  vocabularyListEl.replaceChildren(
+    ...vocabularyTerms.map((term) => {
+      const chipEl = document.createElement('span');
+      chipEl.className = 'term-chip';
+      const labelEl = document.createElement('span');
+      labelEl.textContent = term;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'term-chip-remove';
+      removeBtn.setAttribute('aria-label', `Remove ${term}`);
+      removeBtn.innerHTML = iconSvg('x');
+      removeBtn.addEventListener('click', () => {
+        void saveVocabulary(vocabularyTerms.filter((each) => each !== term));
+      });
+      chipEl.append(labelEl, removeBtn);
+      return chipEl;
+    })
+  );
+}
+
+function renderVocabularySuggestions(): void {
+  const count = vocabularySuggestions.length;
+  vocabularyBadgeEl.hidden = count === 0;
+  vocabularyBadgeEl.textContent = String(count);
+  vocabularySuggestionsEl.hidden = count === 0;
+  vocabularySuggestionListEl.replaceChildren(
+    ...vocabularySuggestions.map((suggestion) => {
+      const rowEl = document.createElement('div');
+      rowEl.className = 'suggestion-row';
+      const copyEl = document.createElement('div');
+      copyEl.className = 'suggestion-copy';
+      const termEl = document.createElement('p');
+      termEl.className = 'suggestion-term';
+      termEl.textContent = suggestion.term;
+      const metaEl = document.createElement('p');
+      metaEl.className = 'suggestion-meta';
+      metaEl.textContent = [`You changed “${suggestion.original}”`, suggestion.source_app]
+        .filter(Boolean)
+        .join(' · ');
+      copyEl.append(termEl, metaEl);
+
+      const actionsEl = document.createElement('div');
+      actionsEl.className = 'buttons';
+      const dismissBtn = document.createElement('button');
+      dismissBtn.type = 'button';
+      dismissBtn.className = 'ui-button ui-button-quiet';
+      dismissBtn.textContent = 'Dismiss';
+      dismissBtn.addEventListener('click', () => {
+        void invokeCommand('dismiss_vocabulary_suggestion', { id: suggestion.id }).catch((error) =>
+          showAppToast(userErrorMessage(error), 'error')
+        );
+      });
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'ui-button';
+      addBtn.textContent = 'Add';
+      addBtn.addEventListener('click', () => {
+        void invokeCommand('accept_vocabulary_suggestion', { id: suggestion.id }).catch((error) =>
+          showAppToast(userErrorMessage(error), 'error')
+        );
+      });
+      actionsEl.append(dismissBtn, addBtn);
+      rowEl.append(copyEl, actionsEl);
+      return rowEl;
+    })
+  );
+  renderHomeSide();
+}
+
+vocabularyAddForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const additions = parseVocabulary(vocabularyAddInput.value).filter((term) => !vocabularyTerms.includes(term));
+  if (additions.length === 0) {
+    vocabularyAddInput.value = '';
+    return;
+  }
+  if (await saveVocabulary([...vocabularyTerms, ...additions])) {
+    vocabularyAddInput.value = '';
+  }
+});
 
 function syncPolishingEnabled(): void {
   polishingOptionsFieldset.disabled = !formatEnabledInput.checked;
@@ -1913,8 +2296,9 @@ function readSettingsFromForm(): Settings {
     prompt_template: promptTemplateInput.value.trim() || defaultPrompt,
     hold_hotkeys: [...activeConfig.hold_hotkeys],
     toggle_hotkeys: [...activeConfig.toggle_hotkeys],
+    rewrite_prompts: clonePrompts(savedRewritePrompts),
     whisper_model: whisperModelInput.value.trim() || 'whisper-1',
-    custom_vocabulary: customVocabularyInput.value.trim(),
+    custom_vocabulary: vocabularyTerms.join('\n'),
     format_model: formatModelInput.value.trim() || 'gpt-4o-mini',
     format_enabled: formatEnabledInput.checked,
     polishing: {
@@ -1931,7 +2315,7 @@ function readSettingsFromForm(): Settings {
   };
 }
 
-function currentSettingsConfig(): Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys' | 'recording_mode' | 'language'> {
+function currentSettingsConfig(): ShortcutConfig {
   return {
     hold_hotkeys: [...activeConfig.hold_hotkeys],
     toggle_hotkeys: [...activeConfig.toggle_hotkeys],
@@ -1948,7 +2332,7 @@ function savedShortcutValues(slot: ShortcutSlot): string[] {
   return [...savedShortcutConfig[slot]];
 }
 
-function updateSavedShortcutConfig(config: Pick<Settings, 'hold_hotkeys' | 'toggle_hotkeys'>): void {
+function updateSavedShortcutConfig(config: Pick<Settings, ShortcutField>): void {
   savedShortcutConfig = {
     hold: normalizeShortcutList(config.hold_hotkeys, 'hold'),
     toggle: normalizeShortcutList(config.toggle_hotkeys, 'toggle')
@@ -1959,12 +2343,12 @@ function renderShortcutDirtyState(): void {
   const shortcutsEqual = (left: string[], right: string[]) =>
     left.length === right.length &&
     [...left].sort().every((value, index) => value === [...right].sort()[index]);
-  const holdDirty = !shortcutsEqual(currentShortcutValues('hold'), savedShortcutValues('hold'));
-  const toggleDirty = !shortcutsEqual(currentShortcutValues('toggle'), savedShortcutValues('toggle'));
-  const anyDirty = holdDirty || toggleDirty;
-
-  shortcutListEls.hold.classList.toggle('is-dirty', holdDirty);
-  shortcutListEls.toggle.classList.toggle('is-dirty', toggleDirty);
+  let anyDirty = false;
+  for (const slot of SHORTCUT_SLOTS) {
+    const dirty = !shortcutsEqual(currentShortcutValues(slot), savedShortcutValues(slot));
+    shortcutListEls[slot].classList.toggle('is-dirty', dirty);
+    anyDirty ||= dirty;
+  }
   shortcutDirtyIndicatorEl.classList.toggle('hidden', !anyDirty);
   saveSettingsBtn.classList.toggle('is-dirty', anyDirty);
   saveSettingsBtn.textContent = anyDirty ? 'Save changes' : 'Save';
@@ -1978,18 +2362,13 @@ function setSettingsHotkeyValidation(slot: ShortcutSlot, message: string, isErro
 }
 
 function validateDistinctHotkeys(): string | null {
-  const seen = new Map<string, ShortcutSlot>();
-  for (const slot of ['hold', 'toggle'] as const) {
-    for (const shortcut of shortcutValuesForSlot(activeConfig, slot)) {
-      const normalized = normalizeHotkeyInput(shortcut);
-      const existing = seen.get(normalized);
-      if (existing) {
-        return 'Each shortcut must be unique across hold and hands-free actions.';
-      }
-      seen.set(normalized, slot);
-    }
-  }
-  return null;
+  const shortcuts = [
+    ...SHORTCUT_SLOTS.flatMap((slot) => shortcutValuesForSlot(activeConfig, slot)),
+    ...rewritePrompts.map((prompt) => prompt.hotkey)
+  ].map(normalizeHotkeyInput);
+  return new Set(shortcuts).size === shortcuts.length
+    ? null
+    : 'Each shortcut must be unique across actions.';
 }
 
 function validateSettingsHotkeyInput(slot: ShortcutSlot): string | null {
@@ -2012,14 +2391,12 @@ function validateSettingsHotkeyInput(slot: ShortcutSlot): string | null {
 
   const distinctError = validateDistinctHotkeys();
   if (distinctError) {
-    setSettingsHotkeyValidation('hold', distinctError, true);
-    setSettingsHotkeyValidation('toggle', distinctError, true);
+    SHORTCUT_SLOTS.forEach((each) => setSettingsHotkeyValidation(each, distinctError, true));
     renderShortcutDirtyState();
     return distinctError;
   }
 
-  setSettingsHotkeyValidation('hold', '', false);
-  setSettingsHotkeyValidation('toggle', '', false);
+  SHORTCUT_SLOTS.forEach((each) => setSettingsHotkeyValidation(each, '', false));
   renderShortcutDirtyState();
   return null;
 }
@@ -2041,6 +2418,7 @@ function sameCaptureTarget(left: HotkeyCaptureTarget | null, right: HotkeyCaptur
   if (!left) return false;
   if (left.scope !== right.scope) return false;
   if (left.scope === 'onboarding' && right.scope === 'onboarding') return true;
+  if (left.scope === 'rewrite' && right.scope === 'rewrite') return left.index === right.index;
   if (left.scope === 'settings' && right.scope === 'settings') {
     return left.slot === right.slot && left.index === right.index;
   }
@@ -2050,6 +2428,8 @@ function sameCaptureTarget(left: HotkeyCaptureTarget | null, right: HotkeyCaptur
 function setActiveHotkeyCaptureValidation(target: HotkeyCaptureTarget, message: string, isError = false): void {
   if (target.scope === 'settings') {
     setSettingsHotkeyValidation(target.slot, message, isError);
+  } else if (target.scope === 'rewrite') {
+    setRewriteValidation(isError ? message : '');
   } else {
     setOnboardingHotkeyValidation(message, isError);
   }
@@ -2083,11 +2463,14 @@ function commitCapturedHotkey(candidate: string): void {
         ? [...shortcuts, candidate]
         : shortcuts.map((shortcut, index) => (index === target.index ? candidate : shortcut));
     applyConfigUi(withShortcutValues(currentSettingsConfig(), slot, nextShortcuts));
-    validateSettingsHotkeyInput('hold');
-    validateSettingsHotkeyInput('toggle');
+    SHORTCUT_SLOTS.forEach(validateSettingsHotkeyInput);
+  } else if (target.scope === 'rewrite') {
+    const prompt = rewritePrompts[target.index];
+    if (prompt) prompt.hotkey = candidate;
+    scheduleRewriteSave(0);
   } else {
     onboardingHotkeyInput.value = candidate;
-    validateOnboardingHotkeyInput();
+    if (!validateOnboardingHotkeyInput()) void saveOnboardingSelections();
   }
   stopHotkeyCapture('Hotkey captured.', false);
 }
@@ -2096,9 +2479,12 @@ function stopHotkeyCapture(message?: string, isError = false): void {
   if (!activeHotkeyCaptureTarget) return;
   syncHotkeyCaptureRegistration(false, activeHotkeyCaptureTarget);
   if (activeHotkeyCaptureTarget.scope === 'settings') {
-    shortcutAddBtns.hold.disabled = false;
-    shortcutAddBtns.toggle.disabled = false;
+    SHORTCUT_SLOTS.forEach((slot) => {
+      shortcutAddBtns[slot].disabled = false;
+    });
     setSettingsHotkeyValidation(activeHotkeyCaptureTarget.slot, isError ? message || '' : '', isError);
+  } else if (activeHotkeyCaptureTarget.scope === 'rewrite') {
+    setRewriteValidation(isError ? message || '' : '');
   } else {
     onboardingHotkeyCaptureBtn.disabled = false;
     setOnboardingHotkeyValidation(isError ? message || '' : '', isError);
@@ -2107,6 +2493,7 @@ function stopHotkeyCapture(message?: string, isError = false): void {
   applyConfigUi({
     ...currentSettingsConfig()
   });
+  renderRewritePrompts();
 }
 
 function startHotkeyCapture(target: HotkeyCaptureTarget): void {
@@ -2116,6 +2503,8 @@ function startHotkeyCapture(target: HotkeyCaptureTarget): void {
   activeHotkeyCaptureTarget = target;
   if (target.scope === 'settings') {
     setSettingsHotkeyValidation(target.slot, '', false);
+  } else if (target.scope === 'rewrite') {
+    setRewriteValidation('');
   } else {
     onboardingHotkeyCaptureBtn.disabled = false;
     setOnboardingHotkeyValidation('', false);
@@ -2124,14 +2513,14 @@ function startHotkeyCapture(target: HotkeyCaptureTarget): void {
   applyConfigUi({
     ...currentSettingsConfig()
   });
+  renderRewritePrompts();
 }
 
 function setupHotkeyCapture(): void {
-  holdShortcutAddBtn.addEventListener('click', () => {
-    startHotkeyCapture({ scope: 'settings', slot: 'hold', index: null });
-  });
-  toggleShortcutAddBtn.addEventListener('click', () => {
-    startHotkeyCapture({ scope: 'settings', slot: 'toggle', index: null });
+  SHORTCUT_SLOTS.forEach((slot) => {
+    shortcutAddBtns[slot].addEventListener('click', () => {
+      startHotkeyCapture({ scope: 'settings', slot, index: null });
+    });
   });
   onboardingHotkeyCaptureBtn.addEventListener('click', () => {
     startHotkeyCapture({ scope: 'onboarding' });
@@ -2163,16 +2552,8 @@ async function saveSettingsPayload(payload: Settings, successMessage = 'Saved se
       invokeCommand<Settings>('get_settings'),
       invokeCommand<RuntimeStatus>('get_runtime_status')
     ]);
-    applyConfigUi({
-      hold_hotkeys: savedSettings.hold_hotkeys,
-      toggle_hotkeys: savedSettings.toggle_hotkeys,
-      recording_mode: savedSettings.recording_mode,
-      language: savedSettings.language
-    });
-    updateSavedShortcutConfig({
-      hold_hotkeys: savedSettings.hold_hotkeys,
-      toggle_hotkeys: savedSettings.toggle_hotkeys
-    });
+    applyConfigUi(savedSettings);
+    updateSavedShortcutConfig(savedSettings);
     apiKeyInput.value = savedSettings.api_key;
     savedApiKey = savedSettings.api_key;
     setApiKeyEditorOpen(false);
@@ -2184,24 +2565,46 @@ async function saveSettingsPayload(payload: Settings, successMessage = 'Saved se
   } catch (error) {
     const errorText = userErrorMessage(error);
     const normalizedError = errorText.toLowerCase();
+    if (errorText.includes('\u201c') || normalizedError.includes('rewrite prompt')) {
+      setActiveTab('rewrite');
+      setRewriteValidation(errorText);
+      setStatusMessage(errorText);
+      return false;
+    }
     if (isShortcutRelatedMessage(errorText)) {
       focusShortcutSettings();
-      if (normalizedError.includes('hold')) {
-        setSettingsHotkeyValidation('hold', errorText, true);
-        setSettingsHotkeyValidation('toggle', '', false);
-      } else if (normalizedError.includes('toggle') || normalizedError.includes('hands-free')) {
-        setSettingsHotkeyValidation('toggle', errorText, true);
-        setSettingsHotkeyValidation('hold', '', false);
-      } else {
-        setSettingsHotkeyValidation('hold', errorText, true);
-        setSettingsHotkeyValidation('toggle', errorText, true);
-      }
+      const errorSlot = SHORTCUT_SLOTS.find((slot) =>
+        normalizedError.includes(SHORTCUT_ACTION_LABELS[slot])
+      );
+      SHORTCUT_SLOTS.forEach((slot) => {
+        const showsError = !errorSlot || slot === errorSlot;
+        setSettingsHotkeyValidation(slot, showsError ? errorText : '', showsError);
+      });
       setStatusMessage(errorText);
       return false;
     }
     setStatusMessage(`Settings were not saved: ${errorText}`);
     return false;
   }
+}
+
+async function saveOnboardingSelections(): Promise<boolean> {
+  if (applyOnboardingSelectionsToSettingsForm()) return false;
+  return saveSettingsPayload(readSettingsFromForm(), 'Settings saved.');
+}
+
+/// The first dictation during the Try step is the proof that setup worked.
+function checkOnboardingTry(entries: TranscriptHistoryEntry[]): void {
+  if (onboardingModalEl.classList.contains('hidden') || onboardingStepOrder[onboardingStepIndex] !== 'try') return;
+  const attempt = entries.find((entry) => entry.created_at_ms >= onboardingTryStartedAt && !isRewriteEntry(entry));
+  if (!attempt) return;
+  onboardingTryResultEl.hidden = false;
+  // History is written before the text is inserted. Give insertion time to land in the focused
+  // practice area, and fill it only if it never arrived, so the text never shows up twice.
+  const text = attempt.final_output.trim();
+  window.setTimeout(() => {
+    if (!onboardingTryInput.value.includes(text)) onboardingTryInput.value = text;
+  }, ONBOARDING_TRY_FILL_DELAY_MS);
 }
 
 function applyOnboardingSelectionsToSettingsForm(): string | null {
@@ -2229,19 +2632,12 @@ function applyOnboardingSelectionsToSettingsForm(): string | null {
   apiKeyInput.value = onboardingApiKeyInput.value.trim();
   renderApiKeyControl();
   apiBaseUrlInput.value = normalizeBaseUrlForSettingsInput(onboardingApiBaseUrlInput.value);
-  recordingModeInput.value = normalizeMode(onboardingRecordingModeInput.value);
-  languageInput.value = normalizeLanguage(onboardingLanguageInput.value);
   activeConfig = withShortcutValues(currentSettingsConfig(), 'hold', [onboardingHotkey]);
-  validateSettingsHotkeyInput('hold');
-  validateSettingsHotkeyInput('toggle');
+  SHORTCUT_SLOTS.forEach(validateSettingsHotkeyInput);
   applyConfigUi({
     ...currentSettingsConfig()
   });
   return null;
-}
-
-function formatHistoryTimestamp(timestampMs: number): string {
-  return new Date(timestampMs).toLocaleString();
 }
 
 function countTranscriptWords(text: string): number {
@@ -2267,25 +2663,42 @@ function formatSavedTime(minutes: number): string {
   return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes}m`;
 }
 
-function computeHistoryStats(entries: TranscriptHistoryEntry[]): {
-  activeDays: number;
-  totalWords: number;
-  estimatedMinutesSaved: number;
-} {
-  const activeDays = new Set(entries.map((entry) => historyDayKey(entry.created_at_ms))).size;
-  const totalWords = entries.reduce((sum, entry) => sum + countTranscriptWords(entry.final_output), 0);
-  const typingMinutes = totalWords / ESTIMATED_TYPING_WPM;
-  const dictationMinutes = totalWords / ESTIMATED_DICTATION_WPM;
-  return {
-    activeDays,
-    totalWords,
-    estimatedMinutesSaved: Math.max(0, typingMinutes - dictationMinutes)
-  };
+function isRewriteEntry(entry: TranscriptHistoryEntry): boolean {
+  return entry.source === 'rewrite';
 }
 
-async function copyTextWithStatus(text: string, successMessage: string): Promise<void> {
-  await invokeCommand('copy_text_to_clipboard', { text });
-  setStatusMessage(successMessage);
+function computeHistoryStats(entries: TranscriptHistoryEntry[]): {
+  dictatedWords: number;
+  rewrittenWords: number;
+  estimatedMinutesSaved: number;
+  streakDays: number;
+} {
+  let dictatedWords = 0;
+  let rewrittenWords = 0;
+  for (const entry of entries) {
+    const words = countTranscriptWords(entry.final_output);
+    if (isRewriteEntry(entry)) rewrittenWords += words;
+    else dictatedWords += words;
+  }
+  // Dictation saves the gap between typing and speaking; a rewrite saves retyping its output.
+  const dictationSaved = dictatedWords / ESTIMATED_TYPING_WPM - dictatedWords / ESTIMATED_DICTATION_WPM;
+  const rewriteSaved = rewrittenWords / ESTIMATED_TYPING_WPM;
+
+  const activeDays = new Set(entries.map((entry) => historyDayKey(entry.created_at_ms)));
+  const cursor = new Date();
+  if (!activeDays.has(historyDayKey(cursor.getTime()))) cursor.setDate(cursor.getDate() - 1);
+  let streakDays = 0;
+  while (activeDays.has(historyDayKey(cursor.getTime()))) {
+    streakDays += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return {
+    dictatedWords,
+    rewrittenWords,
+    estimatedMinutesSaved: Math.max(0, dictationSaved + rewriteSaved),
+    streakDays
+  };
 }
 
 function appToastIconSvg(tone: AppToastTone): string {
@@ -2340,7 +2753,7 @@ async function handleHistoryEntryCopy(entry: TranscriptHistoryEntry): Promise<vo
   try {
     await invokeCommand('copy_text_to_clipboard', { text: entry.final_output });
     markHistoryEntryCopied(entry.id);
-    showAppToast('Copied transcript');
+    showAppToast('Copied');
   } catch (error) {
     showAppToast('Copy failed', 'error');
     setStatusMessage(`Copy failed: ${userErrorMessage(error)}`);
@@ -2353,120 +2766,163 @@ function createTranscriptRow(
   entry: TranscriptHistoryEntry,
   options: {
     active?: boolean;
-    staticMain?: boolean;
     onMainClick?: (() => void) | null;
     isCopied?: boolean;
+    showDate?: boolean;
   } = {}
 ): HTMLDivElement {
+  const rewrite = isRewriteEntry(entry);
   const rowEl = document.createElement('div');
   rowEl.className = 'history-row';
-  if (options.active) {
-    rowEl.classList.add('is-active');
-  }
+  rowEl.classList.toggle('is-active', Boolean(options.active));
 
-  const onMainClick = options.onMainClick ?? null;
-  const mainEl = onMainClick ? document.createElement('button') : document.createElement('div');
-  if (mainEl instanceof HTMLButtonElement && onMainClick) {
-    mainEl.type = 'button';
-    mainEl.addEventListener('click', onMainClick);
-    mainEl.setAttribute(
-      'aria-label',
-      `Transcript from ${formatHistoryDayLabel(entry.created_at_ms)} at ${formatHistoryTime(entry.created_at_ms)}`
-    );
-  }
+  const mainEl = document.createElement('button');
+  mainEl.type = 'button';
   mainEl.className = 'history-row-main';
-  if (options.staticMain || !options.onMainClick) {
-    mainEl.classList.add('is-static');
-  }
-
-  const timeEl = document.createElement('span');
-  timeEl.className = 'history-row-time';
-  timeEl.textContent = formatHistoryTime(entry.created_at_ms);
+  mainEl.setAttribute('aria-label', `Copy ${rewrite ? 'rewrite' : 'transcript'} from ${formatHistoryTime(entry.created_at_ms)}`);
+  if (options.onMainClick) mainEl.addEventListener('click', options.onMainClick);
 
   const bodyEl = document.createElement('div');
   bodyEl.className = 'history-row-body';
-
   const textEl = document.createElement('p');
   textEl.className = 'history-row-text';
-  textEl.textContent = entry.final_output.trim() || 'Empty transcript';
-
+  textEl.textContent = entry.final_output.trim() || 'Empty';
   bodyEl.append(textEl);
-  mainEl.append(timeEl, bodyEl);
-
-  if (onMainClick) {
-    const actionsEl = document.createElement('div');
-    actionsEl.className = 'history-row-actions';
-    const indicatorEl = document.createElement('span');
-    indicatorEl.className = 'history-row-indicator';
-
-    const iconEl = document.createElement('span');
-    iconEl.className = 'history-row-indicator-icon';
-    iconEl.setAttribute('aria-hidden', 'true');
-    iconEl.innerHTML = options.isCopied
-      ? `
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12.5 9.5 17 19 7.5"></path>
-          </svg>
-        `
-      : `
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="9" width="10" height="10" rx="2"></rect>
-            <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>
-          </svg>
-        `;
-
-    indicatorEl.classList.add(options.isCopied ? 'is-copied' : 'is-idle');
-    indicatorEl.append(iconEl);
-    actionsEl.append(indicatorEl);
-    rowEl.append(mainEl, actionsEl);
-    return rowEl;
+  if (rewrite && entry.original_text?.trim()) {
+    const originalEl = document.createElement('p');
+    originalEl.className = 'history-row-original';
+    originalEl.textContent = entry.original_text.trim();
+    bodyEl.append(originalEl);
   }
+  const metaEl = document.createElement('p');
+  metaEl.className = 'history-row-meta';
+  const when = options.showDate
+    ? `${formatHistoryDayLabel(entry.created_at_ms)}, ${formatHistoryTime(entry.created_at_ms)}`
+    : formatHistoryTime(entry.created_at_ms);
+  metaEl.classList.toggle('is-rewrite', rewrite);
+  metaEl.innerHTML = iconSvg(rewrite ? 'pencil' : 'mic');
+  metaEl.append(
+    [when, entry.source_app?.trim(), rewrite ? entry.prompt_name : null].filter(Boolean).join(' · ')
+  );
+  bodyEl.append(metaEl);
 
+  const indicatorEl = document.createElement('span');
+  indicatorEl.className = `history-row-indicator${options.isCopied ? ' is-copied' : ''}`;
+  indicatorEl.innerHTML = iconSvg(options.isCopied ? 'check' : 'copy');
+  indicatorEl.title = options.isCopied ? 'Copied' : 'Copy';
+
+  mainEl.append(bodyEl, indicatorEl);
   rowEl.append(mainEl);
   return rowEl;
 }
 
+function renderActivityChart(): void {
+  const days: { key: string; date: Date; dictation: number; rewrite: number }[] = [];
+  for (let offset = ACTIVITY_DAYS - 1; offset >= 0; offset -= 1) {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() - offset);
+    days.push({ key: historyDayKey(date.getTime()), date, dictation: 0, rewrite: 0 });
+  }
+  const byKey = new Map(days.map((day) => [day.key, day]));
+  for (const entry of historyEntries) {
+    const day = byKey.get(historyDayKey(entry.created_at_ms));
+    if (!day) continue;
+    const words = countTranscriptWords(entry.final_output);
+    if (isRewriteEntry(entry)) day.rewrite += words;
+    else day.dictation += words;
+  }
+  const max = Math.max(1, ...days.map((day) => day.dictation + day.rewrite));
+  const rangeFormat: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  homeActivitySummaryEl.textContent = `${days[0].date.toLocaleDateString([], rangeFormat)} – ${days[days.length - 1].date.toLocaleDateString([], rangeFormat)}`;
+  homeActivityChartEl.replaceChildren(
+    ...days.map((day, index) => {
+      const columnEl = document.createElement('div');
+      columnEl.className = 'chart-col';
+      columnEl.classList.toggle('is-today', index === days.length - 1);
+      const dayTotal = day.dictation + day.rewrite;
+      const dayLabel = day.date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+      columnEl.title = dayTotal
+        ? `${dayLabel}\nDictated ${NUMBER_FORMATTER.format(day.dictation)} · Rewritten ${NUMBER_FORMATTER.format(day.rewrite)} words`
+        : `${dayLabel}\nNo activity`;
+      const barEl = document.createElement('div');
+      barEl.className = 'chart-bar';
+      barEl.classList.toggle('is-empty', dayTotal === 0);
+      // Rewrites stack on top of dictation; empty segments are left out so the gap and rounding stay right.
+      for (const [kind, value] of [['rewrite', day.rewrite], ['dictation', day.dictation]] as const) {
+        if (value <= 0) continue;
+        const segEl = document.createElement('span');
+        segEl.className = `chart-seg is-${kind}`;
+        segEl.style.height = `${(value / max) * 100}%`;
+        barEl.append(segEl);
+      }
+      const labelEl = document.createElement('span');
+      labelEl.className = 'chart-label';
+      labelEl.textContent = day.date.toLocaleDateString([], { weekday: 'narrow' });
+      columnEl.append(barEl, labelEl);
+      return columnEl;
+    })
+  );
+}
+
+function renderHomeSide(): void {
+  homeRewriteListEl.replaceChildren();
+  if (savedRewritePrompts.length === 0) {
+    const emptyEl = document.createElement('p');
+    emptyEl.className = 'card-body-text';
+    emptyEl.textContent = 'No prompts yet';
+    homeRewriteListEl.append(emptyEl);
+  }
+  for (const prompt of savedRewritePrompts) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'mini-row';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'mini-row-label';
+    nameEl.textContent = prompt.name;
+    const keysEl = document.createElement('span');
+    keysEl.className = 'shortcut-keyset';
+    renderShortcutSummary(keysEl, [prompt.hotkey]);
+    rowEl.append(nameEl, keysEl);
+    homeRewriteListEl.append(rowEl);
+  }
+  const termCount = vocabularyTerms.length;
+  const suggestionCount = vocabularySuggestions.length;
+  homeVocabularySummaryEl.textContent = [
+    termCount === 0 ? 'No terms yet' : `${NUMBER_FORMATTER.format(termCount)} term${termCount === 1 ? '' : 's'}`,
+    suggestionCount > 0 ? `${suggestionCount} suggested` : null
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 function renderHomeOverview(): void {
-  const stats = computeHistoryStats(historyEntries);
-  homeStatDaysEl.textContent = NUMBER_FORMATTER.format(stats.activeDays);
-  homeStatWordsEl.textContent = NUMBER_FORMATTER.format(stats.totalWords);
+  // The totals are the chart's legend, so they cover the same 14 days.
+  const windowStart = new Date();
+  windowStart.setHours(0, 0, 0, 0);
+  windowStart.setDate(windowStart.getDate() - (ACTIVITY_DAYS - 1));
+  const stats = computeHistoryStats(historyEntries.filter((entry) => entry.created_at_ms >= windowStart.getTime()));
+  const streakDays = computeHistoryStats(historyEntries).streakDays;
+  homeStatWordsEl.textContent = NUMBER_FORMATTER.format(stats.dictatedWords);
+  homeStatRewrittenEl.textContent = NUMBER_FORMATTER.format(stats.rewrittenWords);
   homeStatSavedEl.textContent = formatSavedTime(stats.estimatedMinutesSaved);
+  homeStatStreakEl.textContent = NUMBER_FORMATTER.format(streakDays);
+  homeStatStreakUnitEl.textContent = streakDays === 1 ? 'day' : 'days';
+  renderActivityChart();
+  renderHomeSide();
 
   const recentEntries = historyEntries.slice(0, HOME_RECENT_LIMIT);
-  homeRecentFeedEl.replaceChildren();
   homeRecentEmptyEl.hidden = recentEntries.length > 0;
-  if (recentEntries.length === 0) {
-    return;
-  }
-
-  for (const entry of recentEntries) {
-    homeRecentFeedEl.append(
+  homeRecentFeedEl.replaceChildren(
+    ...recentEntries.map((entry) =>
       createTranscriptRow(entry, {
-        active: entry.id === historySelectedEntryId,
+        showDate: true,
         isCopied: entry.id === historyCopiedEntryId,
         onMainClick: () => {
           void handleHistoryEntryCopy(entry);
         }
       })
-    );
-  }
-}
-
-function renderDurableDraft(draft: DurableDraft | null): void {
-  durableDraft = draft;
-  const hasDraft = Boolean(draft && draft.text.trim());
-  draftRestoreBannerEl.classList.toggle('hidden', !hasDraft);
-  if (!hasDraft || !draft) {
-    draftRestorePreviewEl.textContent = 'No saved draft.';
-    return;
-  }
-
-  const preview = draft.text.trim();
-  const previewText = preview.length > 220 ? `${preview.slice(0, 220).trimEnd()}...` : preview;
-  const sourceApp = draft.source_app?.trim() || 'Unknown app';
-  draftRestorePreviewEl.textContent = `${formatHistoryTimestamp(
-    draft.created_at_ms
-  )} | ${languageLabel(draft.language)} | ${sourceApp}\n${previewText}`;
+    )
+  );
 }
 
 function isSameCalendarDay(left: Date, right: Date): boolean {
@@ -2523,9 +2979,11 @@ function groupHistoryEntries(entries: TranscriptHistoryEntry[]): HistoryDayGroup
 
 function getVisibleHistoryEntries(): TranscriptHistoryEntry[] {
   const query = historySearchInput.value.trim().toLowerCase();
-  if (!query) return historyEntries;
   return historyEntries.filter((entry) => {
-    const haystack = `${entry.final_output} ${entry.source_app || ''}`.toLowerCase();
+    if (historyFilter === 'rewrite' && !isRewriteEntry(entry)) return false;
+    if (historyFilter === 'dictation' && isRewriteEntry(entry)) return false;
+    if (!query) return true;
+    const haystack = `${entry.final_output} ${entry.original_text || ''} ${entry.source_app || ''} ${entry.prompt_name || ''}`.toLowerCase();
     return haystack.includes(query);
   });
 }
@@ -2538,24 +2996,23 @@ function renderHistory(entries: TranscriptHistoryEntry[]): void {
   historyEntries = [...entries].sort((a, b) => b.created_at_ms - a.created_at_ms);
   renderHomeOverview();
   const visibleEntries = getVisibleHistoryEntries();
-  const hasQuery = historySearchInput.value.trim().length > 0;
-  historyCountEl.textContent = hasQuery
-    ? `${formatTranscriptCount(visibleEntries.length, 'match')} of ${formatTranscriptCount(historyEntries.length)}`
-    : formatTranscriptCount(historyEntries.length);
+  historyCountEl.textContent = formatTranscriptCount(visibleEntries.length, 'item');
+  updatePromptUsageLabels();
   if (historySelectedEntryId && !visibleEntries.some((entry) => entry.id === historySelectedEntryId)) {
     historySelectedEntryId = null;
   }
 
   historyFeedEl.innerHTML = '';
   historyEmptyEl.hidden = visibleEntries.length > 0;
+  const remaining = visibleEntries.length - historyLimit;
+  historyMoreBtn.hidden = remaining <= 0;
   if (visibleEntries.length === 0) {
-    historyEmptyEl.textContent =
-      historyEntries.length === 0 ? 'No transcripts yet. Record once from Home or with your shortcut.' : 'No matches.';
+    historyEmptyEl.textContent = historyEntries.length === 0 ? HISTORY_EMPTY_TEXT : 'No matches.';
     return;
   }
-  historyEmptyEl.textContent = 'No transcripts yet. Record once from Home or with your shortcut.';
+  historyEmptyEl.textContent = HISTORY_EMPTY_TEXT;
 
-  const groupedEntries = groupHistoryEntries(visibleEntries);
+  const groupedEntries = groupHistoryEntries(visibleEntries.slice(0, historyLimit));
   let selectedRow: HTMLDivElement | null = null;
 
   for (const group of groupedEntries) {
@@ -2599,11 +3056,20 @@ function renderHistory(entries: TranscriptHistoryEntry[]): void {
 const savedRecordingsEl = document.querySelector<HTMLDetailsElement>('#saved-recordings')!;
 const savedRecordingsSummary = document.querySelector<HTMLElement>('#saved-recordings-summary')!;
 const savedRecordingsList = document.querySelector<HTMLDivElement>('#saved-recordings-list')!;
+const savedRecordingsMoreBtn = document.querySelector<HTMLButtonElement>('#saved-recordings-more-btn')!;
+const SAVED_RECORDINGS_PAGE_SIZE = 5;
+let savedRecordingsLimit = SAVED_RECORDINGS_PAGE_SIZE;
+let savedRecordingEntries: SavedRecording[] = [];
 let recordingActionPending = false;
 let previousFailedRecordings = '';
 
 async function showSavedRecording(id: string): Promise<void> {
   renderSavedRecordings(await invokeCommand<SavedRecording[]>('get_saved_recordings'));
+  const index = savedRecordingEntries.findIndex(entry => entry.id === id);
+  if (index >= savedRecordingsLimit) {
+    savedRecordingsLimit = index + 1;
+    renderSavedRecordings(savedRecordingEntries);
+  }
   setActiveTab('history');
   savedRecordingsEl.open = true;
   const row = Array.from(savedRecordingsList.children).find(row => (row as HTMLElement).dataset.recordingId === id) as HTMLElement | undefined;
@@ -2611,7 +3077,9 @@ async function showSavedRecording(id: string): Promise<void> {
   row?.focus({ preventScroll: true });
 }
 
-function renderSavedRecordings(entries: SavedRecording[]): void {
+function renderSavedRecordings(input: SavedRecording[]): void {
+  const entries = [...input].sort((a, b) => b.created_at_ms - a.created_at_ms);
+  savedRecordingEntries = entries;
   savedRecordingsEl.hidden = entries.length === 0;
   const failed = entries.filter(entry => entry.status === 'failed').map(entry => entry.id).join(',');
   if (failed && failed !== previousFailedRecordings) savedRecordingsEl.open = true;
@@ -2619,7 +3087,8 @@ function renderSavedRecordings(entries: SavedRecording[]): void {
   const unfinished = entries.filter(entry => !['completed', 'recording', 'processing', 'discarded'].includes(entry.status)).length;
   savedRecordingsSummary.textContent = `Saved audio · ${entries.length}${unfinished ? ` · ${unfinished} unfinished` : ''}`;
   savedRecordingsList.replaceChildren();
-  for (const entry of entries) {
+  savedRecordingsMoreBtn.hidden = entries.length <= savedRecordingsLimit;
+  for (const entry of entries.slice(0, savedRecordingsLimit)) {
     const row = document.createElement('div');
     row.className = 'saved-recording-row';
     row.dataset.recordingId = entry.id;
@@ -2645,9 +3114,13 @@ function renderSavedRecordings(entries: SavedRecording[]): void {
     }
     const actions = document.createElement('div');
     actions.className = 'saved-recording-actions';
-    const action = (text: string, command: string, args: Record<string, unknown>) => {
+    const action = (label: string, icon: keyof typeof ICON_PATHS, command: string, args: Record<string, unknown>) => {
       const button = document.createElement('button');
-      button.type = 'button'; button.className = 'ui-button ui-button-secondary'; button.textContent = text;
+      button.type = 'button';
+      button.className = 'icon-button';
+      button.title = label;
+      button.setAttribute('aria-label', label);
+      button.innerHTML = iconSvg(icon);
       button.addEventListener('click', async () => {
         if (recordingActionPending) return;
         recordingActionPending = true;
@@ -2661,11 +3134,10 @@ function renderSavedRecordings(entries: SavedRecording[]): void {
       actions.append(button);
       return button;
     };
-    action('Audio', 'reveal_recording', { id: entry.id });
     const transcript = entry.transcript || entry.raw_transcript;
-    if (transcript) action('Copy text', 'copy_text_to_clipboard', { text: transcript });
-    const retry = action('Reprocess', 'retry_recording', { id: entry.id });
-    retry.title = 'Transcribe and polish again with current settings';
+    if (transcript) action('Copy text', 'copy', 'copy_text_to_clipboard', { text: transcript });
+    action('Show audio file', 'folder', 'reveal_recording', { id: entry.id });
+    const retry = action('Transcribe again', 'retry', 'retry_recording', { id: entry.id });
     retry.dataset.retryRecording = 'true';
     row.append(info, actions);
     savedRecordingsList.append(row);
@@ -2689,12 +3161,10 @@ async function loadInitial(): Promise<void> {
   savedApiKey = settings.api_key;
   renderApiKeyControl();
   promptTemplateInput.value = settings.prompt_template || defaultPrompt;
-  updateSavedShortcutConfig({
-    hold_hotkeys: settings.hold_hotkeys,
-    toggle_hotkeys: settings.toggle_hotkeys
-  });
+  setRewritePrompts(settings.rewrite_prompts);
+  updateSavedShortcutConfig(settings);
   whisperModelInput.value = settings.whisper_model;
-  customVocabularyInput.value = settings.custom_vocabulary || '';
+  setVocabulary(parseVocabulary(settings.custom_vocabulary || ''));
   formatModelInput.value = settings.format_model;
   applyPolishingSettings(settings);
   skipFormatterInTerminalsInput.checked = settings.skip_formatter_in_terminals;
@@ -2703,21 +3173,10 @@ async function loadInitial(): Promise<void> {
   apiBaseUrlInput.value = settings.api_base_url;
   recordingModeInput.value = normalizeMode(settings.recording_mode);
   languageInput.value = normalizeLanguage(settings.language);
-  activeConfig = {
-    hold_hotkeys: normalizeShortcutList(settings.hold_hotkeys, 'hold'),
-    toggle_hotkeys: normalizeShortcutList(settings.toggle_hotkeys, 'toggle'),
-    recording_mode: normalizeMode(settings.recording_mode),
-    language: normalizeLanguage(settings.language)
-  };
+  activeConfig = settings;
   syncOnboardingInputsFromSettings();
-  applyConfigUi({
-    hold_hotkeys: activeConfig.hold_hotkeys,
-    toggle_hotkeys: activeConfig.toggle_hotkeys,
-    recording_mode: normalizeMode(settings.recording_mode),
-    language: normalizeLanguage(settings.language)
-  });
-  validateSettingsHotkeyInput('hold');
-  validateSettingsHotkeyInput('toggle');
+  applyConfigUi(settings);
+  SHORTCUT_SLOTS.forEach(validateSettingsHotkeyInput);
 
   const status = await invokeCommand<RuntimeStatus>('get_runtime_status');
   renderStatus(status);
@@ -2725,9 +3184,9 @@ async function loadInitial(): Promise<void> {
     focusShortcutSettings();
   }
   await loadHistory();
+  vocabularySuggestions = await invokeCommand<VocabularySuggestion[]>('get_vocabulary_suggestions').catch(() => []);
+  renderVocabularySuggestions();
   renderSavedRecordings(await invokeCommand<SavedRecording[]>('get_saved_recordings'));
-  const draft = await invokeCommand<DurableDraft | null>('get_durable_draft');
-  renderDurableDraft(draft);
 
   try {
     await refreshPermissionStatuses();
@@ -2770,9 +3229,8 @@ languageInput.addEventListener('change', () => {
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const holdHotkeyError = validateSettingsHotkeyInput('hold');
-  const toggleHotkeyError = validateSettingsHotkeyInput('toggle');
-  const hotkeyError = holdHotkeyError || toggleHotkeyError || validateDistinctHotkeys();
+  const hotkeyError =
+    SHORTCUT_SLOTS.map(validateSettingsHotkeyInput).find(Boolean) || validateDistinctHotkeys();
   if (hotkeyError) {
     focusShortcutSettings();
     setStatusMessage(hotkeyError);
@@ -2791,36 +3249,8 @@ apiKeyInput.addEventListener('input', () => {
   renderApiKeyControl();
 });
 
-toggleBtn.addEventListener('click', () => {
-  void requestToggleRecording();
-});
-
 homeToggleBtn.addEventListener('click', () => {
   void requestToggleRecording();
-});
-
-draftRestoreCopyBtn.addEventListener('click', async () => {
-  if (!durableDraft?.text?.trim()) return;
-  draftRestoreCopyBtn.disabled = true;
-  try {
-    await copyTextWithStatus(durableDraft.text, 'Saved text copied.');
-  } catch (error) {
-    setStatusMessage(`Copy failed: ${userErrorMessage(error)}`);
-  } finally {
-    draftRestoreCopyBtn.disabled = false;
-  }
-});
-
-draftRestoreDismissBtn.addEventListener('click', async () => {
-  draftRestoreDismissBtn.disabled = true;
-  try {
-    await invokeCommand('clear_durable_draft');
-    setStatusMessage('Saved text dismissed.');
-  } catch (error) {
-    setStatusMessage(`Saved text was not dismissed: ${userErrorMessage(error)}`);
-  } finally {
-    draftRestoreDismissBtn.disabled = false;
-  }
 });
 
 reopenOnboardingBtn.addEventListener('click', () => {
@@ -2863,9 +3293,8 @@ onboardingNextBtn.addEventListener('click', async () => {
       }
       return;
     }
-    apiKeyInput.value = onboardingApiKeyInput.value.trim();
-    renderApiKeyControl();
-    apiBaseUrlInput.value = normalizeBaseUrlForSettingsInput(onboardingApiBaseUrlInput.value);
+    // Save now: the Try step dictates for real, so the key and shortcut must be live.
+    if (!(await saveOnboardingSelections())) return;
   }
   onboardingStepIndex = Math.min(onboardingStepOrder.length - 1, onboardingStepIndex + 1);
   updateOnboardingStep();
@@ -2879,12 +3308,7 @@ onboardingFinishBtn.addEventListener('click', async () => {
     return;
   }
 
-  const error = applyOnboardingSelectionsToSettingsForm();
-  if (error) return;
-
-  const payload = readSettingsFromForm();
-  const saved = await saveSettingsPayload(payload, 'Onboarding complete. Settings saved and ready.');
-  if (!saved) return;
+  if (!(await saveOnboardingSelections())) return;
 
   setOnboardingCompleted(true);
   hideOnboarding();
@@ -2892,40 +3316,58 @@ onboardingFinishBtn.addEventListener('click', async () => {
 });
 
 onboardingOpenAccessibilitySettingsBtn.addEventListener('click', async () => {
-  await openAccessibilitySettingsFromUi(onboardingOpenAccessibilitySettingsBtn);
-});
-
-onboardingCheckAccessibilityBtn.addEventListener('click', async () => {
-  onboardingCheckAccessibilityBtn.disabled = true;
-  try {
-    await checkAndRenderAccessibilityStatus();
-  } catch (error) {
-    setStatusMessage(`Could not read Accessibility. Open Accessibility, turn ${APP_BRAND.displayName} on, then click Check again.`);
-  } finally {
-    onboardingCheckAccessibilityBtn.disabled = false;
+  const button = onboardingOpenAccessibilitySettingsBtn;
+  if (lastAccessibilityStatus?.status === 'restart_required') {
+    button.disabled = true;
+    await invokeCommand('restart_app').catch(() => {
+      button.disabled = false;
+      setStatusMessage(`Quit and reopen ${APP_BRAND.displayName} to finish enabling Accessibility.`);
+    });
+    return;
   }
-});
-
-onboardingResetAccessibilityPermissionBtn.addEventListener('click', async () => {
-  await resetAccessibilityPermissionFromUi(onboardingResetAccessibilityPermissionBtn);
-});
-
-onboardingCheckMicrophoneBtn.addEventListener('click', async () => {
-  onboardingCheckMicrophoneBtn.disabled = true;
-  try {
-    await checkAndRenderMicrophoneStatus();
-  } catch (error) {
-    setStatusMessage(
-      `Could not read Microphone access. Click Request access, then check System Settings after ${APP_BRAND.displayName} appears.`
-    );
-  } finally {
-    onboardingCheckMicrophoneBtn.disabled = false;
-  }
+  // Not granted, so there is nothing to lose: clearing Verba's entry first removes
+  // a stale switch left by an older build's signature, which would otherwise look
+  // on in System Settings but never work. The request then re-adds Verba to the list.
+  await invokeCommand<string>('reset_accessibility_permission').catch(() => null);
+  await openAccessibilitySettingsFromUi(button);
 });
 
 onboardingOpenMicrophoneSettingsBtn.addEventListener('click', async () => {
   await openMicrophoneSettingsFromUi(onboardingOpenMicrophoneSettingsBtn);
 });
+
+// While the Access step is open, poll quietly so rows flip to "Allowed" as soon as
+// the user turns a switch on in System Settings, without a "Check again" button.
+
+async function pollOnboardingPermissions(): Promise<void> {
+  const sequences = { ...permissionCheckSequence };
+  const [accessibility, microphone] = await Promise.all([
+    invokeCommand<AccessibilityPermissionStatus>('check_accessibility_permission').catch(() => null),
+    invokeCommand<MicrophonePermissionStatus>('check_microphone_permission').catch(() => null)
+  ]);
+  // A click-driven check started meanwhile owns the row; do not overwrite it.
+  if (accessibility && sequences.accessibility === permissionCheckSequence.accessibility) {
+    renderAccessibilityStatus(accessibility);
+  }
+  if (microphone && sequences.microphone === permissionCheckSequence.microphone) {
+    renderMicrophoneStatus(microphone);
+  }
+  if (onboardingStepOrder[onboardingStepIndex] === 'permissions' && document.activeElement === document.body) {
+    focusOnboardingStep();
+  }
+}
+
+function syncOnboardingPermissionPolling(): void {
+  const active = isTauriRuntime()
+    && !onboardingModalEl.classList.contains('hidden')
+    && onboardingStepOrder[onboardingStepIndex] === 'permissions';
+  if (active && onboardingPermissionPollId === null) {
+    onboardingPermissionPollId = window.setInterval(() => { void pollOnboardingPermissions(); }, ONBOARDING_PERMISSION_POLL_MS);
+  } else if (!active && onboardingPermissionPollId !== null) {
+    window.clearInterval(onboardingPermissionPollId);
+    onboardingPermissionPollId = null;
+  }
+}
 
 window.addEventListener('focus', schedulePermissionRefresh);
 document.addEventListener('visibilitychange', () => {
@@ -2953,19 +3395,59 @@ statusBannerEl.addEventListener('keydown', (event) => {
 
 listenEvent<TranscriptHistoryEntry[]>('transcript-history-updated', (event) => {
   renderHistory(event.payload);
+  checkOnboardingTry(event.payload);
 }).catch((error) => {
   setStatusMessage(`History listener failed: ${userErrorMessage(error)}`);
 });
 
 historySearchInput.addEventListener('input', () => {
+  historyLimit = HISTORY_PAGE_SIZE;
   renderHistory(historyEntries);
 });
 
-listenEvent<DurableDraft | null>('durable-draft-updated', (event) => {
-  renderDurableDraft(event.payload);
-}).catch((error) => {
-  setStatusMessage(`Draft listener failed: ${userErrorMessage(error)}`);
+savedRecordingsMoreBtn.addEventListener('click', () => {
+  savedRecordingsLimit += SAVED_RECORDINGS_PAGE_SIZE;
+  renderSavedRecordings(savedRecordingEntries);
 });
+
+historyMoreBtn.addEventListener('click', () => {
+  historyLimit += HISTORY_PAGE_SIZE;
+  renderHistory(historyEntries);
+});
+
+historyFilterButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    historyFilter = (button.dataset.historyFilter as HistoryFilter) || 'all';
+    historyLimit = HISTORY_PAGE_SIZE;
+    historyFilterButtons.forEach((each) => {
+      const active = each === button;
+      each.classList.toggle('is-active', active);
+      each.setAttribute('aria-checked', String(active));
+    });
+    renderHistory(historyEntries);
+  });
+});
+
+document.querySelectorAll<HTMLButtonElement>('[data-go-tab]').forEach((button) => {
+  button.addEventListener('click', () => setActiveTab(button.dataset.goTab as WorkspaceTab));
+});
+
+listenEvent<Settings>('settings-changed', (event) => {
+  setVocabulary(parseVocabulary(event.payload.custom_vocabulary || ''));
+  const incoming = event.payload.rewrite_prompts;
+  if (JSON.stringify(incoming) !== JSON.stringify(savedRewritePrompts)) {
+    const editing = rewritePromptListEl.contains(document.activeElement) || rewriteSaveTimer !== null;
+    savedRewritePrompts = clonePrompts(incoming);
+    if (!editing) setRewritePrompts(incoming);
+    renderHomeSide();
+  }
+}).catch(() => undefined);
+
+listenEvent<VocabularySuggestion[]>('vocabulary-suggestions-changed', (event) => {
+  vocabularySuggestions = event.payload;
+  renderVocabularySuggestions();
+}).catch(() => undefined);
+
 
 listenEvent<SavedRecording[]>('recordings-updated', event => renderSavedRecordings(event.payload));
 listenEvent<string>('open-recording-history', event => {
