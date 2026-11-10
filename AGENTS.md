@@ -129,7 +129,7 @@ The desktop app should use a framed shell layout:
 - history should read like a simple transcript timeline, not an analytics/export dashboard
 - prefer grouped day sections with time + transcript rows over split panes, export controls, or detail inspectors
 - if history search exists, keep it to one plain search field; avoid extra dropdown filters or export tooling
-- Home leads with the indicator-styled record card (always near-black, both themes), then one Activity card, then recent items
+- Home leads with the record card, then one Activity card, then recent items. The record card, status pill and toast follow the theme: white cards in light, the indicator's blacks in dark. In light mode the record button is the only solid-ink element on Home
 - the Activity card's totals cover the same 14 days as its chart and double as its legend; no separate stat tiles
 - stats track dictation and rewrites separately; time saved is an estimate and must say so on hover
 - if transcript rows need actions, keep it to a direct copy action inside the row; avoid separate detail panes just for copy/open behavior

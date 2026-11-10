@@ -12,6 +12,10 @@ pub struct Correction {
 const MAX_CHANGED_CHARS: usize = 60;
 const MAX_CJK_TERM_CHARS: usize = 12;
 const MAX_TERM_WORDS: usize = 4;
+/// An edit may span a few more words than the term it carries ("at midnight" ->
+/// "on Midnight protocol"); only the term itself is suggested.
+const MAX_EDIT_WORDS: usize = 6;
+const MIN_PLAIN_TERM_CHARS: usize = 4;
 
 /// Char range `[start, end)` of `inserted` inside `field`, preferring the last match.
 pub fn find_inserted_region(field: &str, inserted: &str) -> Option<(usize, usize)> {
@@ -57,8 +61,12 @@ pub fn detect_term_correction(
         return None;
     }
 
-    let original = expand_to_word(&before, prefix, deleted_end);
-    let term = expand_to_word(&after, prefix, added_end);
+    let edited_from = expand_to_word(&before, prefix, deleted_end);
+    let edited_to = expand_to_word(&after, prefix, added_end);
+    if edited_to.split_whitespace().count() > MAX_EDIT_WORDS {
+        return None;
+    }
+    let (original, term) = focus_on_term(&edited_from, &edited_to)?;
     if term.chars().count() < 2
         || !term.chars().any(char::is_alphanumeric)
         || term.split_whitespace().count() > MAX_TERM_WORDS
@@ -80,6 +88,75 @@ pub fn detect_term_correction(
         a <= MAX_CJK_TERM_CHARS && b <= MAX_CJK_TERM_CHARS && b * 3 >= a && a * 3 >= b
     };
     looks_like_term_fix.then_some(Correction { original, term })
+}
+
+/// Narrows a multi-word edit to the term inside it, paired with the original word
+/// it most resembles. Changed words that look like a name (a capital or a digit)
+/// win; otherwise any run of changed words can be the term, as long as it is not
+/// a short function word. The caller's similarity check then rejects rewording.
+fn focus_on_term(original: &str, edited: &str) -> Option<(String, String)> {
+    let clean = |word: &str| {
+        word.trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '_').to_string()
+    };
+    let edited_words: Vec<String> = edited.split_whitespace().map(clean).filter(|w| !w.is_empty()).collect();
+    if edited_words.len() <= 1 || !is_latin(edited) {
+        return Some((original.to_string(), edited.to_string()));
+    }
+    let original_words: Vec<String> = original.split_whitespace().map(clean).filter(|w| !w.is_empty()).collect();
+    let is_changed = |word: &String| !original_words.contains(word);
+    let looks_like_name = |word: &String| word.chars().any(|ch| ch.is_uppercase() || ch.is_ascii_digit());
+
+    // Contiguous runs of changed words that pass `keep`.
+    let runs_where = |keep: &dyn Fn(&String) -> bool| {
+        let mut runs: Vec<String> = Vec::new();
+        let mut current: Vec<&str> = Vec::new();
+        for word in &edited_words {
+            if is_changed(word) && keep(word) {
+                current.push(word);
+            } else if !current.is_empty() {
+                runs.push(current.join(" "));
+                current.clear();
+            }
+        }
+        if !current.is_empty() {
+            runs.push(current.join(" "));
+        }
+        runs
+    };
+    let mut runs = runs_where(&|word| looks_like_name(word));
+    if runs.is_empty() {
+        // Misheard ordinary words ("cooper netties" -> "kubernetes"). Short words
+        // are grammar ("at" -> "on"), not vocabulary.
+        // Added filler around the fix ("the kubernetes cluster") is cut away by
+        // trying every sub-span; the closest to the original wins below.
+        for run in runs_where(&|_| true) {
+            let words: Vec<&str> = run.split(' ').collect();
+            for start in 0..words.len() {
+                for end in start + 1..=words.len().min(start + MAX_TERM_WORDS) {
+                    let span = words[start..end].join(" ");
+                    if span.chars().filter(|ch| ch.is_alphanumeric()).count() >= MIN_PLAIN_TERM_CHARS {
+                        runs.push(span);
+                    }
+                }
+            }
+        }
+    }
+    if runs.is_empty() {
+        return None;
+    }
+
+    // Each candidate is compared with every original word and the whole original;
+    // the closest pair wins, so the suggestion keeps "Was: midnight".
+    let mut sources = original_words.clone();
+    sources.push(original_words.join(" "));
+    let distance = |a: &str, b: &str| {
+        let (a, b) = (a.to_lowercase(), b.to_lowercase());
+        levenshtein(&a, &b) as f64 / a.chars().count().max(b.chars().count()).max(1) as f64
+    };
+    runs.iter()
+        .flat_map(|run| sources.iter().map(move |source| (distance(source, run), source, run)))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, source, run)| (source.clone(), run.clone()))
 }
 
 fn is_cjk(ch: char) -> bool {
@@ -178,6 +255,34 @@ mod tests {
         let region = find_inserted_region(inserted, inserted).unwrap();
         let vocabulary = vec!["Vercel".to_string()];
         assert_eq!(detect_term_correction(inserted, "Ship the Vercel release", region, &vocabulary), None);
+    }
+
+    #[test]
+    fn only_the_name_inside_a_wider_edit_is_suggested() {
+        let inserted = "We launch at midnight next week.";
+        let found = correction(inserted, inserted, "We launch on Midnight protocol next week.").unwrap();
+        assert_eq!(found.term, "Midnight");
+        assert_eq!(found.original, "midnight");
+    }
+
+    #[test]
+    fn a_multi_word_name_inside_an_edit_stays_together() {
+        let inserted = "Deposit into more fo blue today.";
+        let found = correction(inserted, inserted, "Deposit into the Morfo Blue vault today.").unwrap();
+        assert_eq!(found.term, "Morfo Blue");
+    }
+
+    #[test]
+    fn a_misheard_lowercase_word_inside_a_wider_edit_is_suggested() {
+        let inserted = "Deploy it to cooper netties tonight.";
+        let found = correction(inserted, inserted, "Deploy it to the kubernetes cluster tonight.").unwrap();
+        assert_eq!(found.term, "kubernetes");
+    }
+
+    #[test]
+    fn rewording_without_a_name_is_not_a_term_fix() {
+        let inserted = "Let's meet at noon on the roof.";
+        assert_eq!(correction(inserted, inserted, "Let's meet around noon by the roof."), None);
     }
 
     #[test]

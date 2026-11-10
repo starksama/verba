@@ -270,7 +270,7 @@ void verba_set_overlay_window_layout(void *window_ptr, int layout) {
   NSWindow *window = (__bridge NSWindow *)window_ptr;
   verba_run_overlay_window_operation(window, ^{
     VerbaOverlayController *controller = verba_overlay_controller(window);
-    NSSize size = layout == 2 ? NSMakeSize(256, 112) : layout == 1 ? NSMakeSize(256, 44) : NSMakeSize(128, 44);
+    NSSize size = layout == 2 ? NSMakeSize(308, 140) : layout == 1 ? NSMakeSize(308, 52) : NSMakeSize(150, 52);
     [controller.panel setContentSize:size];
     [controller track];
   });

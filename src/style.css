@@ -28,20 +28,22 @@
   --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-pop: 0 18px 50px rgba(16, 24, 40, 0.18);
 
-  /* The indicator itself never changes theme. */
-  --indicator-bg: #0b0b0b;
-  --indicator-border: #2b2b2b;
-  --indicator-text: #f5f5f5;
-  --indicator-muted: #8f8f8f;
-  --indicator-key: #1d1d1d;
-  --indicator-key-border: #3a3a3a;
+  /* In-app indicator surfaces (record card, status pill, toast) follow the theme:
+     white cards in light, the floating indicator's blacks in dark. The floating
+     indicator window (overlay.html) has its own fixed palette. */
+  --indicator-bg: #ffffff;
+  --indicator-border: #e6e7ea;
+  --indicator-text: #141518;
+  --indicator-muted: #5d6169;
+  --indicator-key: #f4f5f7;
+  --indicator-key-border: #dcdee3;
 
   --green: #12a37c;
   --red: #d93a3a;
   --amber: #c98a12;
   --live-green: #30d158;
-  --live-voice: #5b8ff9;
-  --live-mint: #34c99a;
+  --live-voice: #2468f2;
+  --live-mint: #12a37c;
   --live-red: #ff453a;
   --live-amber: #ffd60a;
 
@@ -82,6 +84,13 @@
   --shadow-card: none;
   --shadow-pop: 0 18px 50px rgba(0, 0, 0, 0.55);
   --indicator-bg: #050505;
+  --indicator-border: #2b2b2b;
+  --indicator-text: #f5f5f5;
+  --indicator-muted: #8f8f8f;
+  --indicator-key: #1d1d1d;
+  --indicator-key-border: #3a3a3a;
+  --live-voice: #5b8ff9;
+  --live-mint: #34c99a;
   color-scheme: dark;
 }
 
@@ -253,8 +262,9 @@ button:disabled {
   height: 20px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--ink);
-  color: var(--on-ink);
+  background: var(--card-muted);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
   font-size: 12px;
   font-weight: 600;
   line-height: 20px;
@@ -745,6 +755,7 @@ textarea.ui-input {
   border: 1px solid var(--indicator-border);
   border-radius: var(--r-xl);
   background: var(--indicator-bg);
+  box-shadow: var(--shadow-card);
   color: var(--indicator-text);
 }
 
@@ -853,8 +864,8 @@ textarea.ui-input {
   flex: none;
   border: 0;
   border-radius: 50%;
-  background: #f5f5f5;
-  color: #0d0d0e;
+  background: var(--ink);
+  color: var(--on-ink);
   transition: transform 160ms var(--ease);
 }
 
@@ -877,7 +888,7 @@ textarea.ui-input {
   width: 18px;
   height: 18px;
   border-radius: 5px;
-  background: #0d0d0e;
+  background: var(--on-ink);
 }
 
 .record-button.is-recording .icon-mic {
@@ -1678,6 +1689,7 @@ textarea.ui-input {
   border: 1px solid var(--indicator-border);
   border-radius: 12px;
   background: var(--indicator-bg);
+  box-shadow: var(--shadow-pop);
   color: var(--indicator-text);
   font-size: 13px;
   opacity: 0;
