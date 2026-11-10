@@ -1,6 +1,6 @@
 [package]
 name = "verba"
-version = "0.2.1"
+version = "0.2.2"
 description = "Minimal macOS desktop dictation app"
 authors = ["Verba contributors"]
 license = "MIT"

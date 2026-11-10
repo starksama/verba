@@ -196,11 +196,12 @@
 
           <!-- Vocabulary -->
           <section id="tab-vocabulary-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-vocabulary" data-tab-panel="vocabulary" hidden>
-            <p class="page-lede">Names and terms Verba should always spell your way, in dictation, polishing, and rewrites.</p>
+            <p class="page-lede">Words Verba should always spell your way: names, products, and jargon. Used when transcribing, polishing, and rewriting.</p>
             <form id="vocabulary-add-form" class="vocabulary-add">
-              <input id="vocabulary-add-input" class="ui-input" type="text" placeholder="Add a term" aria-label="Add a term" autocomplete="off" spellcheck="false" />
+              <input id="vocabulary-add-input" class="ui-input" type="text" placeholder="Add a term, like Kubernetes or 台積電" aria-label="Add a term" autocomplete="off" spellcheck="false" />
               <button type="submit" class="ui-button">Add</button>
             </form>
+            <p class="vocabulary-hint">Spelling only. To translate or change wording, use a <button id="vocabulary-rewrite-link" type="button" class="inline-link">Rewrite prompt</button>.</p>
 
             <section id="vocabulary-suggestions" class="card suggestions-card" hidden aria-label="Suggested terms">
               <div class="card-header">
@@ -217,7 +218,7 @@
                 <p class="card-title">Your terms</p>
                 <span id="vocabulary-count" class="card-meta">0</span>
               </div>
-              <p id="vocabulary-empty" class="empty-state">Add names, products, and jargon you use often.</p>
+              <p id="vocabulary-empty" class="empty-state">No terms yet. Good candidates: people&rsquo;s names (Siobhan), product names (PostgreSQL), and acronyms or model names (gpt-4o).</p>
               <div id="vocabulary-list" class="term-list"></div>
             </section>
           </section>
@@ -322,6 +323,7 @@
                     <details class="settings-advanced">
                       <summary>Custom instructions</summary>
                       <textarea id="promptTemplate" class="ui-input" rows="4" aria-label="Polishing instructions"></textarea>
+                      <p class="settings-hint">Tone and style only. Names and terms belong in Vocabulary.</p>
                     </details>
                   </fieldset>
                   <label class="settings-row">

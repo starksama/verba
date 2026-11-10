@@ -306,6 +306,8 @@ const vocabularySuggestionListEl = document.querySelector<HTMLDivElement>('#voca
 const vocabularyListEl = document.querySelector<HTMLDivElement>('#vocabulary-list')!;
 const vocabularyEmptyEl = document.querySelector<HTMLParagraphElement>('#vocabulary-empty')!;
 const vocabularyCountEl = document.querySelector<HTMLSpanElement>('#vocabulary-count')!;
+const vocabularyRewriteLink = document.querySelector<HTMLButtonElement>('#vocabulary-rewrite-link')!;
+
 const vocabularyBadgeEl = document.querySelector<HTMLSpanElement>('#vocabulary-badge')!;
 const historyFilterButtons = document.querySelectorAll<HTMLButtonElement>('[data-history-filter]');
 const headerActionGroups = document.querySelectorAll<HTMLElement>('[data-header-for]');
@@ -2214,6 +2216,8 @@ function renderVocabulary(): void {
     })
   );
 }
+
+vocabularyRewriteLink.addEventListener('click', () => setActiveTab('rewrite'));
 
 function renderVocabularySuggestions(): void {
   const count = vocabularySuggestions.length;

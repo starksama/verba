@@ -1572,7 +1572,7 @@ textarea.ui-input {
 }
 
 .settings-form {
-  max-width: 760px;
+  min-width: 0;
 }
 
 .settings-group {
@@ -1631,10 +1631,23 @@ textarea.ui-input {
   opacity: 0.5;
 }
 
+/* Options read top to bottom under their label instead of floating right. */
+.polishing-options {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
 .check-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 10px 22px;
+}
+
+.settings-hint {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 12.5px;
 }
 
 .settings-advanced summary,
@@ -2050,4 +2063,27 @@ textarea.ui-input {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---------- vocabulary hints ---------- */
+
+.vocabulary-hint {
+  margin: -6px 0 6px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.inline-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.inline-link:hover {
+  color: var(--text);
 }

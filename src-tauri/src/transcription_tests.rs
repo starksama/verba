@@ -57,6 +57,7 @@ fn live_compressed_upload() {
     let transcript = tauri::async_runtime::block_on(transcribe_audio(
         &client,
         &settings,
+        &[],
         &audio_path,
         cancelled,
         |part, total| {
@@ -183,6 +184,7 @@ fn transcription_sends_lossless_flac_and_retries_transient_errors() {
     let text = tauri::async_runtime::block_on(transcribe_audio(
         &reqwest::Client::new(),
         &settings,
+        &[],
         &path,
         Arc::new(AtomicBool::new(false)),
         |part, total| assert_eq!((part, total), (1, 1)),
@@ -241,6 +243,7 @@ fn permanent_upload_error_is_actionable_and_original_can_be_reprocessed() {
     let error = tauri::async_runtime::block_on(transcribe_audio(
         &reqwest::Client::new(),
         &settings,
+        &[],
         &path,
         Arc::new(AtomicBool::new(false)),
         |_, _| {},
@@ -270,6 +273,7 @@ fn permanent_upload_error_is_actionable_and_original_can_be_reprocessed() {
     let text = tauri::async_runtime::block_on(transcribe_audio(
         &reqwest::Client::new(),
         &settings,
+        &[],
         &path,
         Arc::new(AtomicBool::new(false)),
         |_, _| {},

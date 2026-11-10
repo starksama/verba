@@ -2,6 +2,7 @@
 
 mod recordings;
 mod edit_detection;
+mod vocabulary_usage;
 mod audio_upload;
 #[cfg(test)]
 mod transcription_tests;
@@ -634,6 +635,7 @@ struct AppState {
     debug_log: Mutex<Vec<String>>,
     rewrite_job: Mutex<Option<RewriteJob>>,
     vocabulary_suggestions: Mutex<Vec<VocabularySuggestion>>,
+    vocabulary_usage: Mutex<vocabulary_usage::Usage>,
 }
 
 struct RewriteJob {
@@ -1528,6 +1530,7 @@ fn push_transcript_history_entry(
 
     persist_transcript_history(app, &snapshot)?;
     emit_transcript_history(app, state);
+    record_vocabulary_usage(app, state, trimmed);
     Ok(())
 }
 
@@ -2294,6 +2297,15 @@ mod transcription_prompt_tests {
     };
 
     #[test]
+    fn a_long_vocabulary_is_never_cut_inside_a_term() {
+        let terms: Vec<String> = (0..200).map(|i| format!("Term{i:03}")).collect();
+        let prompt = build_transcription_prompt("whisper-1", "auto", &terms.join(", ")).unwrap();
+        let hints = prompt.lines().next().unwrap();
+        assert!(hints.chars().count() <= super::TRANSCRIPTION_PROMPT_CONTEXT_MAX_CHARS);
+        assert!(hints.split(", ").all(|term| terms.iter().any(|t| t == term)));
+    }
+
+    #[test]
     fn vocabulary_reaches_polishing_and_rewrite_prompts() {
         let vocabulary = "Verba\nVercel, Milo\u{ff0c}Tauri";
         let terms = super::vocabulary_terms(vocabulary);
@@ -2818,6 +2830,35 @@ fn load_vocabulary_suggestions(app: &AppHandle) -> Vec<VocabularySuggestion> {
         .and_then(|path| fs::read_to_string(path).ok())
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
+}
+
+fn vocabulary_usage_path(app: &AppHandle) -> Result<PathBuf, AppError> {
+    Ok(vocabulary_suggestions_path(app)?.with_file_name("vocabulary_usage.json"))
+}
+
+fn load_vocabulary_usage(app: &AppHandle) -> vocabulary_usage::Usage {
+    vocabulary_usage_path(app)
+        .ok()
+        .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Counts the vocabulary terms in text the user just produced, so the ones they
+/// actually say lead the transcription prompt.
+fn record_vocabulary_usage(app: &AppHandle, state: &AppState, text: &str) {
+    let Ok(terms) = state.settings.lock().map(|settings| vocabulary_terms(&settings.custom_vocabulary)) else { return };
+    let Ok(mut usage) = state.vocabulary_usage.lock() else { return };
+    if !vocabulary_usage::record(&mut usage, &terms, text, now_epoch_ms()) {
+        return;
+    }
+    let data = serde_json::to_string_pretty(&*usage);
+    drop(usage);
+    if let (Ok(path), Ok(data)) = (vocabulary_usage_path(app), data) {
+        if let Err(error) = recordings::atomic_write(&path, data.as_bytes()) {
+            operational_log(format!("vocabulary_usage_persist_failed error={error}"));
+        }
+    }
 }
 
 /// Persists and broadcasts the suggestion list after a change.
@@ -4067,8 +4108,12 @@ async fn process_audio_pipeline(
                 audio_stats.peak
             ),
         );
+        let ranked_vocabulary = {
+            let usage = state.vocabulary_usage.lock().map(|usage| usage.clone()).unwrap_or_default();
+            vocabulary_usage::rank(&vocabulary_terms(&settings.custom_vocabulary), &usage)
+        };
         let transcription = transcribe_audio(
-            &state.http_client, &settings, &processing_wav_path, cancelled.clone(),
+            &state.http_client, &settings, &ranked_vocabulary, &processing_wav_path, cancelled.clone(),
             |part, total| {
                 let Ok(_action) = state.recording_action.lock() else { return; };
                 if !cancelled.load(Ordering::SeqCst) {
@@ -4157,6 +4202,7 @@ async fn process_audio_pipeline(
 async fn transcribe_audio(
     client: &reqwest::Client,
     settings: &Settings,
+    vocabulary: &[String],
     wav_path: &Path,
     cancelled: Arc<AtomicBool>,
     progress: impl Fn(usize, usize),
@@ -4171,7 +4217,7 @@ async fn transcribe_audio(
     let base_prompt = build_transcription_prompt(
         &settings.whisper_model,
         &transcription_language,
-        &vocabulary_terms(&settings.custom_vocabulary).join(", "),
+        &vocabulary.join(", "),
     );
     let mut transcripts = Vec::new();
     for (index, part) in prepared.parts.iter().enumerate() {
@@ -4281,8 +4327,12 @@ fn build_transcription_prompt(
     custom_vocabulary: &str,
 ) -> Option<String> {
     let normalized_language = normalize_transcription_language(transcription_language);
-    let custom = truncate_chars(
+    // A long list helps transcription less than it costs: Whisper keeps only the
+    // end of a short context, and long term lists make models more likely to
+    // insert terms that were never said. Polishing and rewrites get the full list.
+    let custom = truncate_at_separator(
         custom_vocabulary.trim(),
+        ", ",
         TRANSCRIPTION_PROMPT_CONTEXT_MAX_CHARS,
     );
 
@@ -4363,15 +4413,31 @@ fn with_vocabulary(prompt: String, raw_vocabulary: &str) -> String {
     if terms.is_empty() {
         return prompt;
     }
-    let list = truncate_chars(&terms.join("\n"), VOCABULARY_PROMPT_MAX_CHARS);
+    let list = truncate_at_separator(&terms.join("\n"), "\n", VOCABULARY_PROMPT_MAX_CHARS);
     format!(
         "{prompt}\n\nVocabulary (the user's preferred spellings of names and terms):\n{list}\n\nWhen the text contains one of these terms, or an obvious misspelling, mishearing, or wrong-script version of one, write it exactly as listed. Never add a term that the text does not already refer to."
     )
 }
 
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    text.chars().take(max_chars).collect()
+/// Keeps whole `separator`-delimited items while the result fits in `max_chars`,
+/// so a vocabulary list is never cut in the middle of a term.
+fn truncate_at_separator(text: &str, separator: &str, max_chars: usize) -> String {
+    let mut kept = String::new();
+    for item in text.split(separator) {
+        let next_len = kept.chars().count()
+            + if kept.is_empty() { 0 } else { separator.chars().count() }
+            + item.chars().count();
+        if next_len > max_chars {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push_str(separator);
+        }
+        kept.push_str(item);
+    }
+    kept
 }
+
 
 fn validate_transcription_text(text: &str) -> Result<String, AppError> {
     let trimmed = text.trim();
@@ -5882,6 +5948,7 @@ fn main() {
                 debug_log: Mutex::new(Vec::new()),
                 rewrite_job: Mutex::new(None),
                 vocabulary_suggestions: Mutex::new(load_vocabulary_suggestions(app.handle())),
+                vocabulary_usage: Mutex::new(load_vocabulary_usage(app.handle())),
             };
             app.manage(state);
             let control_app = app.handle().clone();
