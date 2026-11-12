@@ -4692,12 +4692,12 @@ fn build_formatter_system_prompt(
 
     prompt.push_str("\n\nSelected polishing options (override conflicting style or custom instructions; always preserve meaning):\n");
     prompt.push_str(if options.remove_fillers {
-        "- Remove fillers: ON. Remove nonsemantic hesitation sounds, including um, umm, uh, er, hmm, ohh, 呃、嗯、唔, and empty verbal padding such as 'you know', 'I mean', 那個、就是、然後 when they add no meaning. Do not leave filler ellipses behind. Preserve meaningful reactions, answers, quoted words, causal/sequence links, and uncertainty such as 'maybe' or 'I think'. If the input is ONLY hesitation sounds, return an empty string.\n"
+        "- Remove fillers: ON. Remove nonsemantic hesitation sounds, including um, umm, uh, er, hmm, ohh, 呃、嗯、唔, and empty verbal padding such as 'like', 'you know', 'I mean', 'kind of', 'sort of', 'basically', 那個、就是、然後 when they add no meaning. 'like' is padding when it is a verbal tic, not a verb ('I like it') or a comparison ('something like this'). Do not leave filler ellipses behind. Preserve meaningful reactions, answers, quoted words, causal/sequence links, and uncertainty such as 'maybe' or 'I think'. If the input is ONLY hesitation sounds, return an empty string.\n"
     } else {
         "- Remove fillers: OFF. Keep ALL hesitation sounds and verbal padding from the transcript; punctuate them without deleting them. Consolidation must not override this: um, hmm, 呃 and similar sounds MUST remain.\n"
     });
     prompt.push_str(if options.consolidate {
-        "- Consolidate wording: ON. Rewrite rambling speech into clear, concise sentences. Merge repeated statements of the same idea, remove stutters and abandoned starts, and combine related clauses. Resolve an explicit self-correction to the speaker's final intended wording. Retain EVERY distinct point, request, constraint, qualification, example, name, quantity, deadline, negation, and uncertainty. Keep logical order and dependencies. Attach trailing qualifiers to the sentence they qualify. For example, 'we should order lunch we should order lunch by noon I think' becomes 'I think we should order lunch by noon.' Consolidate expression, never summarize away information.\n"
+        "- Consolidate wording: ON. Rewrite rambling speech into clear, concise sentences. Merge repeated statements of the same idea, remove stutters and abandoned starts, and combine related clauses. Resolve self-corrections: when the speaker corrects themselves with a cue such as 'sorry', 'I mean', 'I meant', 'no wait', 'actually', 'scratch that', 不對、我是說、應該是, keep only the corrected version and drop the cue and the words it replaces. For example, 'send the deck to Mei on Thursday sorry I meant Friday' becomes 'Send the deck to Mei on Friday.' Retain EVERY distinct point, request, constraint, qualification, example, name, quantity, deadline, negation, and uncertainty. Keep logical order and dependencies. Attach trailing qualifiers to the sentence they qualify. For example, 'we should order lunch we should order lunch by noon I think' becomes 'I think we should order lunch by noon.' Consolidate expression, never summarize away information.\n"
     } else {
         "- Consolidate wording: OFF. Preserve ALL original wording, repetitions, restarts, and order of ideas apart from punctuation, grammar, and explicitly enabled filler removal. Repeated clauses MUST remain repeated. Do not paraphrase, merge, translate, or deduplicate sentences.\n"
     });
@@ -5255,6 +5255,21 @@ fn copy_ax_attribute(element: AXUIElementRef, attribute_name: &str) -> Result<CF
     Ok(value)
 }
 
+/// Whether the element belongs to a web page (Chromium, Electron, or WebKit), which
+/// expose DOM attributes that native text views do not.
+#[cfg(target_os = "macos")]
+fn is_web_content_ax_element(element: AXUIElementRef) -> bool {
+    ["ChromeAXNodeId", "AXDOMClassList", "AXDOMIdentifier"]
+        .iter()
+        .any(|attribute| match copy_ax_attribute(element, attribute) {
+            Ok(value) => {
+                unsafe { CFRelease(value) };
+                true
+            }
+            Err(_) => false,
+        })
+}
+
 #[cfg(target_os = "macos")]
 fn is_ax_attribute_settable(element: AXUIElementRef, attribute_name: &str) -> Result<bool, String> {
     let attribute = CFString::new(attribute_name);
@@ -5401,6 +5416,13 @@ fn copy_focused_ax_element(target_app_name: Option<&str>) -> Result<AXUIElementR
 fn insert_text_via_accessibility(text: &str, target_app_name: Option<&str>) -> Result<(), String> {
     let focused_element = copy_focused_ax_element(target_app_name)?;
     let result = (|| {
+        // A web page's AXValue is its rendered text, not the field's content: an
+        // empty rich editor can report its placeholder (ChatGPT's "Work with …"),
+        // and writing the whole value back would make that placeholder real text
+        // and flatten rich content. Web fields take the paste path instead.
+        if is_web_content_ax_element(focused_element) {
+            return Err("focused element is web content".to_string());
+        }
         if !is_ax_attribute_settable(focused_element, "AXValue")? {
             return Err("AXValue is not settable on the focused element".to_string());
         }

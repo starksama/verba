@@ -34,6 +34,20 @@ fn live_polishing_preferences() {
             vec!["umm"],
         ),
         (
+            "Resolve self-correction",
+            PolishingOptions::default(),
+            "um send the deck to Mei on Thursday sorry I meant Friday and cc Florian",
+            vec!["deck", "Mei", "Friday", "Florian"],
+            vec!["Thursday", "sorry", "meant"],
+        ),
+        (
+            "Drop the like tic but keep the verb",
+            PolishingOptions::default(),
+            "so I like the new design but we should like ship it like this week",
+            vec!["like the new design", "ship", "this week"],
+            vec!["should like", "like this week"],
+        ),
+        (
             "Disable all three options",
             PolishingOptions { remove_fillers: false, consolidate: false, structure: false },
             "umm hmm please send the report please send the report first open settings then save",
