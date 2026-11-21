@@ -39,6 +39,9 @@ interface preferences are separate from **Verba** (`com.verba.desktop`).
 
 ## Build
 
+After changing `img/app-icon.png`, run `python3 scripts/generate-tray-icons.py` with Pillow
+installed to regenerate the macOS menu bar icons.
+
 Create the macOS app and DMG:
 
 ```bash

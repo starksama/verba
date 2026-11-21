@@ -46,7 +46,9 @@ const APP_STATUS_EVENT: &str = "runtime-status";
 const APP_CONFIG_JSON: &str = include_str!("../../app.config.json");
 const OVERLAY_WINDOW_LABEL: &str = "overlay";
 const TRAY_ID: &str = "main-tray";
-const TRAY_ICON_SIZE: usize = 18;
+const TRAY_READY_ICON: Image<'static> = tauri::include_image!("icons/tray-ready.png");
+const TRAY_RECORDING_ICON: Image<'static> = tauri::include_image!("icons/tray-recording.png");
+const TRAY_PROCESSING_ICON: Image<'static> = tauri::include_image!("icons/tray-processing.png");
 const PRE_PASTE_DELAY_MS: u64 = 120;
 const TARGET_APP_REFOCUS_DELAY_MS: u64 = 120;
 const PASTE_RETRY_BACKOFF_MS: u64 = 45;
@@ -122,7 +124,7 @@ struct Settings {
     skip_formatter_in_terminals: bool,
     #[serde(default = "default_include_clipboard_context")]
     include_clipboard_context: bool,
-    #[serde(default = "default_play_sound_cues")]
+    #[serde(default)]
     play_sound_cues: bool,
     api_base_url: String,
     #[serde(default = "default_recording_mode")]
@@ -151,10 +153,6 @@ impl Default for PolishingOptions {
 
 fn default_format_enabled() -> bool {
     true
-}
-
-fn default_play_sound_cues() -> bool {
-    false
 }
 
 fn default_skip_formatter_in_terminals() -> bool {
@@ -1663,73 +1661,21 @@ fn emit_mic_level(app: &AppHandle, mic_level: u8) {
     let _ = app.emit(APP_STATUS_EVENT, status.clone());
 }
 
-fn draw_tray_pixel(rgba: &mut [u8], x: usize, y: usize, alpha: u8) {
-    if x >= TRAY_ICON_SIZE || y >= TRAY_ICON_SIZE {
-        return;
-    }
-    let index = (y * TRAY_ICON_SIZE + x) * 4;
-    rgba[index] = 0;
-    rgba[index + 1] = 0;
-    rgba[index + 2] = 0;
-    rgba[index + 3] = alpha;
-}
-
-fn draw_tray_rect(rgba: &mut [u8], x: usize, y: usize, width: usize, height: usize, alpha: u8) {
-    for yy in y..y.saturating_add(height) {
-        for xx in x..x.saturating_add(width) {
-            draw_tray_pixel(rgba, xx, yy, alpha);
-        }
-    }
-}
-
-fn draw_tray_icon(active: bool, processing: bool) -> Image<'static> {
-    let mut rgba = vec![0; TRAY_ICON_SIZE * TRAY_ICON_SIZE * 4];
-    let alpha = if processing { 210 } else { 255 };
-
-    draw_tray_rect(&mut rgba, 4, 6, 2, 7, alpha);
-    draw_tray_rect(&mut rgba, 8, 3, 3, 12, alpha);
-    draw_tray_rect(&mut rgba, 13, 6, 4, 2, alpha);
-    draw_tray_rect(&mut rgba, 12, 10, 5, 2, alpha);
-
-    if active {
-        draw_tray_rect(&mut rgba, 14, 3, 3, 3, alpha);
-        draw_tray_rect(&mut rgba, 13, 14, 4, 2, alpha);
-    } else if processing {
-        draw_tray_rect(&mut rgba, 3, 14, 3, 2, alpha);
-        draw_tray_rect(&mut rgba, 13, 14, 3, 2, alpha);
-    }
-
-    Image::new_owned(rgba, TRAY_ICON_SIZE as u32, TRAY_ICON_SIZE as u32)
-}
-
-fn tray_state_label(status: &RuntimeStatus) -> &'static str {
-    if status.is_recording {
-        "Recording"
-    } else if status.is_processing {
-        "Processing"
-    } else {
-        "Ready"
-    }
-}
-
 fn update_tray_status(app: &AppHandle, status: &RuntimeStatus) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;
     };
 
-    let state_label = tray_state_label(status);
+    let (state_label, icon) = if status.is_recording {
+        ("Recording", TRAY_RECORDING_ICON)
+    } else if status.is_processing {
+        ("Processing", TRAY_PROCESSING_ICON)
+    } else {
+        ("Ready", TRAY_READY_ICON)
+    };
     let tooltip = format!("{} - {state_label}", app_display_name());
     let _ = tray.set_tooltip(Some(tooltip));
-    let _ = tray.set_icon(Some(draw_tray_icon(
-        status.is_recording,
-        status.is_processing,
-    )));
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = tray.set_icon_as_template(true);
-        let _ = tray.set_title(None::<&str>);
-    }
+    let _ = tray.set_icon_with_as_template(Some(icon), true);
 }
 
 #[cfg(target_os = "macos")]
@@ -2431,7 +2377,20 @@ mod audio_capture_tests {
 
 #[cfg(test)]
 mod settings_compat_tests {
-    use super::Settings;
+    use super::{settings_from_json, Settings};
+
+    #[test]
+    fn sound_cues_default_to_off() {
+        let defaults = Settings::default();
+        assert!(!defaults.play_sound_cues);
+
+        let mut legacy = serde_json::to_value(defaults).unwrap();
+        legacy["language"] = "ja".into();
+        legacy.as_object_mut().unwrap().remove("play_sound_cues");
+        let settings = settings_from_json(legacy);
+        assert_eq!(settings.language, "ja");
+        assert!(!settings.play_sound_cues);
+    }
 
     #[test]
     fn loads_legacy_single_shortcut_fields_into_lists() {
@@ -6073,7 +6032,7 @@ fn main() {
 
             let _tray = TrayIconBuilder::with_id(TRAY_ID)
                 .menu(&menu)
-                .icon(draw_tray_icon(false, false))
+                .icon(TRAY_READY_ICON)
                 .icon_as_template(true)
                 .tooltip(app_display_name())
                 .show_menu_on_left_click(false)

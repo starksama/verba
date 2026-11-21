@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=icons");
     #[cfg(target_os = "macos")]
     {
         println!("cargo:rerun-if-changed=src/macos_permissions.m");

@@ -1,7 +1,7 @@
 #import <AppKit/AppKit.h>
 
 void verba_configure_overlay_window(void *window);
-void verba_set_overlay_window_expanded(void *window, bool expanded);
+void verba_set_overlay_window_layout(void *window, int layout);
 void verba_show_overlay_window_without_activation(void *window);
 void verba_hide_overlay_window(void *window);
 
@@ -13,7 +13,7 @@ int main(void) {
   @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 128, 44)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 150, 52)
       styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
     window.releasedWhenClosed = NO;
     NSView *host = window.contentView;
@@ -33,11 +33,11 @@ int main(void) {
     for (int i = 0; i < 3; i++) {
       verba_configure_overlay_window(handle);
       CHECK(surface.window == panel, "configuration must reuse the same panel");
-      verba_set_overlay_window_expanded(handle, true);
+      verba_set_overlay_window_layout(handle, 2);
       NSSize expanded = surface.frame.size;
       CHECK(expanded.width > host.bounds.size.width && expanded.height > host.bounds.size.height,
         "expanded state must make room for its controls");
-      verba_set_overlay_window_expanded(handle, false);
+      verba_set_overlay_window_layout(handle, 0);
       CHECK(NSEqualSizes(surface.frame.size, host.bounds.size), "collapsed state must match the window");
       verba_show_overlay_window_without_activation(handle);
       CHECK(panel.visible && !window.visible, "only the panel should be shown");

@@ -121,6 +121,7 @@ const SHORTCUT_ACTION_LABELS: Record<ShortcutSlot, string> = {
   toggle: 'hands-free'
 };
 type ShortcutConfig = Pick<Settings, ShortcutField | 'recording_mode' | 'language'>;
+type SettingsFormValues = Omit<Settings, ShortcutField | 'rewrite_prompts' | 'custom_vocabulary'>;
 type HotkeyCaptureTarget =
   | { scope: 'settings'; slot: ShortcutSlot; index: number | null }
   | { scope: 'rewrite'; index: number }
@@ -285,7 +286,6 @@ const toggleShortcutAddBtn = document.querySelector<HTMLButtonElement>('#toggle-
 const rewritePromptListEl = document.querySelector<HTMLDivElement>('#rewrite-prompt-list')!;
 const rewriteValidationEl = document.querySelector<HTMLParagraphElement>('#rewrite-validation')!;
 const rewritePromptAddBtn = document.querySelector<HTMLButtonElement>('#rewrite-prompt-add-btn')!;
-const shortcutDirtyIndicatorEl = document.querySelector<HTMLSpanElement>('#shortcut-dirty-indicator')!;
 const homeToggleBtn = document.querySelector<HTMLButtonElement>('#home-toggle-btn')!;
 const homeHeroEl = document.querySelector<HTMLElement>('#home-hero')!;
 const heroTitleEl = document.querySelector<HTMLParagraphElement>('#hero-title')!;
@@ -404,6 +404,7 @@ let savedShortcutConfig: Record<ShortcutSlot, string[]> = {
   hold: ['Cmd+Space'],
   toggle: ['Option+Space']
 };
+let savedSettingsFormValues: SettingsFormValues | null = null;
 let rewritePrompts: RewritePrompt[] = [];
 let savedRewritePrompts: RewritePrompt[] = [];
 let vocabularyTerms: string[] = [];
@@ -1564,17 +1565,18 @@ function applyConfigUi(
   };
 
   // Shortcuts already say how to record; only a pinned language is worth repeating.
-  const languageText = activeConfig.language === 'auto' ? '' : languageLabel(activeConfig.language);
+  const savedLanguage = savedSettingsFormValues?.language ?? 'auto';
+  const languageText = savedLanguage === 'auto' ? '' : languageLabel(savedLanguage);
 
-  renderShortcutSummary(shortcutHoldHintEl, activeConfig.hold_hotkeys);
-  renderShortcutSummary(shortcutToggleHintEl, activeConfig.toggle_hotkeys);
+  renderShortcutSummary(shortcutHoldHintEl, savedShortcutConfig.hold);
+  renderShortcutSummary(shortcutToggleHintEl, savedShortcutConfig.toggle);
   SHORTCUT_SLOTS.forEach(renderShortcutEditor);
   renderOnboardingHotkeyTrigger(
     onboardingHotkeyInput.value || activeConfig.hold_hotkeys[0],
     activeHotkeyCaptureTarget?.scope === 'onboarding'
   );
   modeStatusTextEl.textContent = languageText;
-  renderShortcutDirtyState();
+  renderSettingsDirtyState();
 }
 
 function setRecordingActionLabels(
@@ -2294,15 +2296,11 @@ function applyPolishingSettings(settings: Settings): void {
 
 formatEnabledInput.addEventListener('change', syncPolishingEnabled);
 
-function readSettingsFromForm(): Settings {
+function readSettingsFormValues(): SettingsFormValues {
   return {
     api_key: apiKeyInput.value.trim(),
     prompt_template: promptTemplateInput.value.trim() || defaultPrompt,
-    hold_hotkeys: [...activeConfig.hold_hotkeys],
-    toggle_hotkeys: [...activeConfig.toggle_hotkeys],
-    rewrite_prompts: clonePrompts(savedRewritePrompts),
     whisper_model: whisperModelInput.value.trim() || 'whisper-1',
-    custom_vocabulary: vocabularyTerms.join('\n'),
     format_model: formatModelInput.value.trim() || 'gpt-4o-mini',
     format_enabled: formatEnabledInput.checked,
     polishing: {
@@ -2328,14 +2326,6 @@ function currentSettingsConfig(): ShortcutConfig {
   };
 }
 
-function currentShortcutValues(slot: ShortcutSlot): string[] {
-  return [...shortcutValuesForSlot(activeConfig, slot)];
-}
-
-function savedShortcutValues(slot: ShortcutSlot): string[] {
-  return [...savedShortcutConfig[slot]];
-}
-
 function updateSavedShortcutConfig(config: Pick<Settings, ShortcutField>): void {
   savedShortcutConfig = {
     hold: normalizeShortcutList(config.hold_hotkeys, 'hold'),
@@ -2343,19 +2333,20 @@ function updateSavedShortcutConfig(config: Pick<Settings, ShortcutField>): void 
   };
 }
 
-function renderShortcutDirtyState(): void {
-  const shortcutsEqual = (left: string[], right: string[]) =>
-    left.length === right.length &&
-    [...left].sort().every((value, index) => value === [...right].sort()[index]);
-  let anyDirty = false;
+function renderSettingsDirtyState(): void {
+  let shortcutsDirty = false;
   for (const slot of SHORTCUT_SLOTS) {
-    const dirty = !shortcutsEqual(currentShortcutValues(slot), savedShortcutValues(slot));
+    const draft = [...shortcutValuesForSlot(activeConfig, slot)].sort();
+    const saved = [...savedShortcutConfig[slot]].sort();
+    const dirty = draft.length !== saved.length || draft.some((value, index) => value !== saved[index]);
     shortcutListEls[slot].classList.toggle('is-dirty', dirty);
-    anyDirty ||= dirty;
+    shortcutsDirty ||= dirty;
   }
-  shortcutDirtyIndicatorEl.classList.toggle('hidden', !anyDirty);
-  saveSettingsBtn.classList.toggle('is-dirty', anyDirty);
-  saveSettingsBtn.textContent = anyDirty ? 'Save changes' : 'Save';
+  const fieldsDirty = savedSettingsFormValues !== null &&
+    JSON.stringify(readSettingsFormValues()) !== JSON.stringify(savedSettingsFormValues);
+  const settingsDirty = shortcutsDirty || fieldsDirty;
+  saveSettingsBtn.classList.toggle('is-dirty', settingsDirty);
+  saveSettingsBtn.textContent = settingsDirty ? 'Save changes' : 'Save';
 }
 
 function setSettingsHotkeyValidation(slot: ShortcutSlot, message: string, isError = false): void {
@@ -2380,7 +2371,7 @@ function validateSettingsHotkeyInput(slot: ShortcutSlot): string | null {
   if (shortcuts.length === 0) {
     const emptyMessage = 'Add at least one shortcut.';
     setSettingsHotkeyValidation(slot, emptyMessage, true);
-    renderShortcutDirtyState();
+    renderSettingsDirtyState();
     return emptyMessage;
   }
 
@@ -2388,7 +2379,7 @@ function validateSettingsHotkeyInput(slot: ShortcutSlot): string | null {
     const validationMessage = validateHotkey(shortcut);
     if (validationMessage) {
       setSettingsHotkeyValidation(slot, validationMessage, true);
-      renderShortcutDirtyState();
+      renderSettingsDirtyState();
       return validationMessage;
     }
   }
@@ -2396,12 +2387,12 @@ function validateSettingsHotkeyInput(slot: ShortcutSlot): string | null {
   const distinctError = validateDistinctHotkeys();
   if (distinctError) {
     SHORTCUT_SLOTS.forEach((each) => setSettingsHotkeyValidation(each, distinctError, true));
-    renderShortcutDirtyState();
+    renderSettingsDirtyState();
     return distinctError;
   }
 
   SHORTCUT_SLOTS.forEach((each) => setSettingsHotkeyValidation(each, '', false));
-  renderShortcutDirtyState();
+  renderSettingsDirtyState();
   return null;
 }
 
@@ -2548,23 +2539,34 @@ function setupHotkeyCapture(): void {
   );
 }
 
-async function saveSettingsPayload(payload: Settings, successMessage = 'Saved settings.'): Promise<boolean> {
+async function saveSettingsFromForm(): Promise<boolean> {
+  if (saveSettingsBtn.disabled) return false;
+  const fields = readSettingsFormValues();
+  const settings: Settings = {
+    ...fields,
+    hold_hotkeys: [...activeConfig.hold_hotkeys],
+    toggle_hotkeys: [...activeConfig.toggle_hotkeys],
+    rewrite_prompts: clonePrompts(savedRewritePrompts),
+    custom_vocabulary: vocabularyTerms.join('\n')
+  };
+  saveSettingsBtn.disabled = true;
   try {
     setStatusMessage('Saving settings');
-    await invokeCommand('save_settings', { settings: payload });
+    await invokeCommand('save_settings', { settings });
     const [savedSettings, runtimeStatus] = await Promise.all([
       invokeCommand<Settings>('get_settings'),
       invokeCommand<RuntimeStatus>('get_runtime_status')
     ]);
-    applyConfigUi(savedSettings);
     updateSavedShortcutConfig(savedSettings);
+    savedSettingsFormValues = fields;
+    applyConfigUi(savedSettings);
     apiKeyInput.value = savedSettings.api_key;
     savedApiKey = savedSettings.api_key;
     setApiKeyEditorOpen(false);
     applyPolishingSettings(savedSettings);
     renderStatus(runtimeStatus);
-    setStatusMessage(successMessage);
-    renderShortcutDirtyState();
+    setStatusMessage('Settings saved.');
+    renderSettingsDirtyState();
     return true;
   } catch (error) {
     const errorText = userErrorMessage(error);
@@ -2589,12 +2591,14 @@ async function saveSettingsPayload(payload: Settings, successMessage = 'Saved se
     }
     setStatusMessage(`Settings were not saved: ${errorText}`);
     return false;
+  } finally {
+    saveSettingsBtn.disabled = false;
   }
 }
 
 async function saveOnboardingSelections(): Promise<boolean> {
   if (applyOnboardingSelectionsToSettingsForm()) return false;
-  return saveSettingsPayload(readSettingsFromForm(), 'Settings saved.');
+  return saveSettingsFromForm();
 }
 
 /// The first dictation during the Try step is the proof that setup worked.
@@ -3177,6 +3181,7 @@ async function loadInitial(): Promise<void> {
   apiBaseUrlInput.value = settings.api_base_url;
   recordingModeInput.value = normalizeMode(settings.recording_mode);
   languageInput.value = normalizeLanguage(settings.language);
+  savedSettingsFormValues = readSettingsFormValues();
   activeConfig = settings;
   syncOnboardingInputsFromSettings();
   applyConfigUi(settings);
@@ -3231,6 +3236,9 @@ languageInput.addEventListener('change', () => {
   });
 });
 
+form.addEventListener('input', renderSettingsDirtyState);
+form.addEventListener('change', renderSettingsDirtyState);
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const hotkeyError =
@@ -3241,8 +3249,7 @@ form.addEventListener('submit', async (event) => {
     return;
   }
 
-  const payload = readSettingsFromForm();
-  await saveSettingsPayload(payload);
+  await saveSettingsFromForm();
 });
 
 apiKeyEditBtn.addEventListener('click', () => {
