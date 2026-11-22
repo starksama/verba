@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { arch } from 'node:process';
 import { verifyStableSignature } from './macos-signature.mjs';
 
 const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -20,9 +19,6 @@ const cargoTargetDir = join(metadata.target_directory, 'release');
 const appPath = join(cargoTargetDir, 'bundle', 'macos', `${displayName}.app`);
 const dmgDir = join(cargoTargetDir, 'bundle', 'dmg');
 const dmgStageDir = join(dmgDir, `${displayName}-install`);
-const macArch = arch === 'arm64' ? 'aarch64' : arch;
-const dmgPath = join(dmgDir, `${displayName}_${packageJson.version}_${macArch}.dmg`);
-
 if (process.platform !== 'darwin') {
   throw new Error('macOS DMG creation requires macOS.');
 }
@@ -31,6 +27,12 @@ if (!existsSync(appPath)) {
   throw new Error(`Missing app bundle: ${appPath}`);
 }
 verifyStableSignature(appPath);
+const executable = join(appPath, 'Contents', 'MacOS', appConfig.packageName);
+const architectures = execFileSync('lipo', ['-archs', executable], { encoding: 'utf8' }).trim().split(/\s+/);
+const architectureNames = { arm64: 'aarch64', x86_64: 'x64' };
+const macArch = architectures.length === 1 ? architectureNames[architectures[0]] : 'universal';
+if (!macArch) throw new Error(`Unsupported macOS architecture: ${architectures.join(', ')}`);
+const dmgPath = join(dmgDir, `${displayName}_${packageJson.version}_${macArch}.dmg`);
 
 mkdirSync(dmgDir, { recursive: true });
 rmSync(dmgPath, { force: true });

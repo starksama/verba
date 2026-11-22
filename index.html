@@ -308,6 +308,10 @@
                       <input id="apiKey" class="ui-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." aria-label="OpenAI API key" />
                     </label>
                   </div>
+                  <div class="settings-row">
+                    <span class="settings-row-label">iPhone</span>
+                    <button id="phone-sync-open" type="button" class="ui-button ui-button-secondary">Sync to iPhone</button>
+                  </div>
                   <label class="settings-row">
                     <span class="settings-row-label">Polishing</span>
                     <input id="formatEnabled" class="switch" type="checkbox" />
@@ -368,6 +372,12 @@
       <p id="app-toast-text" class="app-toast-text"></p>
     </div>
 
+    <dialog id="phone-sync-dialog" class="modal-card phone-sync-dialog" aria-labelledby="phone-sync-title">
+      <h2 id="phone-sync-title">Sync to iPhone</h2>
+      <p id="phone-sync-status" role="status"></p>
+      <img id="phone-sync-code" width="232" height="232" alt="One-time Verba pairing QR code" hidden />
+      <form method="dialog"><button class="ui-button ui-button-secondary">Close</button></form>
+    </dialog>
     <div id="onboarding-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" aria-describedby="onboarding-step-indicator">
       <section class="modal-card onboarding-card">
         <div class="onboarding-progress" aria-hidden="true"><span></span><span></span><span></span><span></span></div>

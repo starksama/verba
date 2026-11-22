@@ -4,6 +4,7 @@ mod recordings;
 mod edit_detection;
 mod vocabulary_usage;
 mod audio_upload;
+mod phone_sync;
 #[cfg(test)]
 mod transcription_tests;
 
@@ -5831,6 +5832,7 @@ fn main() {
     let context = tauri::generate_context!();
     let _ = APP_CONFIG.set(runtime_app_config(context.config()));
     tauri::Builder::default()
+        .manage(phone_sync::PhoneSync::default())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             show_main_window(app);
         }))
@@ -6065,6 +6067,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            phone_sync::begin_phone_sync,
+            phone_sync::phone_sync_status,
+            phone_sync::cancel_phone_sync,
             save_settings,
             get_runtime_status,
             get_transcript_history,

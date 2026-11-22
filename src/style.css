@@ -2082,3 +2082,37 @@ textarea.ui-input {
 .inline-link:hover {
   color: var(--text);
 }
+
+.phone-sync-dialog {
+  width: min(360px, calc(100% - 32px));
+  padding: 20px;
+  gap: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-align: center;
+}
+
+.phone-sync-dialog:not([open]) {
+  display: none;
+}
+
+.phone-sync-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+
+.phone-sync-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 550;
+}
+
+.phone-sync-dialog p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.phone-sync-dialog img {
+  margin: 0 auto;
+  border-radius: 10px;
+  background: white;
+}

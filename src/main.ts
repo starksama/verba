@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { APP_BRAND } from './app-config';
 import '@fontsource-variable/inter';
+import { bindPhoneSync } from './phone-sync';
 
 type RecordingMode = 'hold' | 'toggle';
 type TranscriptionLanguage =
@@ -2316,6 +2317,14 @@ function readSettingsFormValues(): SettingsFormValues {
     language: normalizeLanguage(languageInput.value)
   };
 }
+
+bindPhoneSync(() => {
+  if (!savedSettingsFormValues) return false;
+  const draft = readSettingsFormValues();
+  return draft.api_key !== savedSettingsFormValues.api_key
+    || draft.api_base_url !== savedSettingsFormValues.api_base_url
+    || draft.whisper_model !== savedSettingsFormValues.whisper_model;
+});
 
 function currentSettingsConfig(): ShortcutConfig {
   return {
